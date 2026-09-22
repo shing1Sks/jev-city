@@ -628,6 +628,8 @@ function personFrom(seed: Seed): Person {
     authority: seed.age >= 60 ? 76 : seed.age >= 18 ? 42 : seed.age >= 13 ? 16 : 4,
     bricks: 0,
     alive: true,
+    matter: null,
+    settledWith: [],
     intent: null,
     speech: null,
     memory: [],

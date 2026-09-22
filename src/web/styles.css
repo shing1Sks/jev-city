@@ -258,17 +258,33 @@
   to { transform: translateY(-3px); }
 }
 
-.mark-own {
+.work {
   position: absolute;
-  z-index: 2;
-  transform: translate(-50%, -50%);
-  font-size: 0.62rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #1b140f;
-  background: rgba(240, 195, 106, 0.88);
-  padding: 0.05rem 0.28rem;
+  z-index: 3;
+  transform: translate(-50%, -82%);
   pointer-events: none;
+}
+
+.work img {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.28));
+}
+
+.work b {
+  position: absolute;
+  top: calc(100% - 0.15rem);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.05rem 0.32rem;
+  border-radius: 999px;
+  background: rgba(12, 16, 12, 0.9);
+  color: #f0c36a;
+  font-size: 0.62rem;
+  font-weight: 560;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 @media (max-width: 720px) {

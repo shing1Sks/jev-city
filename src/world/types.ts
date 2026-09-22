@@ -103,6 +103,14 @@ export type Facing = "front" | "back" | "left" | "right";
 
 export type Feeling = "content" | "hungry" | "tired" | "lonely" | "afraid" | "playing" | "jealous" | "bitter" | "rival";
 
+export type MatterKind = "court" | "rift" | "teach" | "rival";
+
+export interface Matter {
+  withId: string;
+  kind: MatterKind;
+  step: number;
+}
+
 export interface Walk {
   from: PlaceId;
   to: PlaceId;
@@ -148,6 +156,8 @@ export interface Person {
   authority: number;
   bricks: number;
   alive: boolean;
+  matter: Matter | null;
+  settledWith: string[];
   intent: ActiveIntent | null;
   speech: SpeechBubble | null;
   memory: MemoryLine[];
@@ -286,6 +296,7 @@ export interface PublicPerson {
   authority: number;
   bricks: number;
   alive: boolean;
+  matter: { withName: string; kind: MatterKind; step: number } | null;
   hunger: number;
   energy: number;
   belonging: number;

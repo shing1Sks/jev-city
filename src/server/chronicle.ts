@@ -116,9 +116,11 @@ function promptFor(world: World): string {
   return [
     `This is the close of day ${world.summaryFor ?? world.day}. Write only what already happened.`,
     "Past tense. Key points: work, weather, love, jealousy, rivalry, births, deaths, and anything someone built.",
+    "built is the full list of finished works. Name only those, and do not raise the count. If built is empty, do not say a shrine, garden, stall, orchard, house, or watch was made.",
     "Do not greet the morning. Do not say the day is young, that people are just waking, or that nothing has happened.",
     "If the log is thin, name the few things that did occur. Do not invent a fresh start.",
     "Visitors are outsiders who walked in. If one is listed, their talk and suggestions are part of the day. Do not invent visitors who are not listed.",
+    "matters are one-to-one aims already underway. Mention one only when it is listed. Do not invent a courtship, a feud, or a lesson.",
     "Return JSON with chronicle, story, people, bonds.",
     "story.headline is one line about the day that ended. story.body is two sentences of that finished day. story.gossip is exactly 3 short lines a neighbor would repeat the next morning.",
     "Do not quote private speech in story.body or story.gossip. You may hint that two people spoke aside.",
@@ -134,6 +136,14 @@ function promptFor(world: World): string {
       people,
       recent,
       visitors: world.visitors.map((visitor) => ({ name: visitor.name, place: visitor.place, note: visitor.note })),
+      matters: world.people
+        .filter((person) => person.matter)
+        .map((person) => ({
+          name: person.name,
+          with: world.people.find((other) => other.id === person.matter?.withId)?.name ?? "",
+          kind: person.matter?.kind,
+          step: person.matter?.step,
+        })),
     }),
   ].join("\n");
 }

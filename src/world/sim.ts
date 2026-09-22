@@ -7,6 +7,7 @@ import type {
   ActionOption,
   CityEvent,
   Decision,
+  Matter,
   Person,
   PlaceId,
   PublicPerson,
@@ -34,7 +35,7 @@ function parkAtHome(people: Person[]): void {
 export function createWorld(): World {
   const cast = createCast();
   parkAtHome(cast.people);
-  return {
+  const world: World = {
     tick: 0,
     hour: 7,
     minute: 0,
@@ -83,6 +84,8 @@ export function createWorld(): World {
       model: "gpt-6-luna",
     },
   };
+  ensureMatters(world);
+  return world;
 }
 
 export function setClock(world: World, hour: number, minute: number): void {
@@ -112,7 +115,8 @@ export function applyDecision(world: World, decision: Decision): void {
   const options = forced ? [forced] : legalActions(person, world);
   const option = options.find((item) => item.id === decision.actionId) ?? options[0];
   if (!option) return;
-  const speech = sanitizeSpeech(person, world, decision, option);
+  const aimed = bendTowardMatter(world, person, decision);
+  const speech = sanitizeSpeech(person, world, aimed, option);
   if (speech.speak && speech.utterance) say(world, person, speech.audience, speech.listenerId, speech.utterance.text);
   person.intent = makeIntent(person, world, option);
   person.because = decision.because;
@@ -151,7 +155,7 @@ function advanceClock(world: World): void {
 
 function decay(world: World): void {
   for (const person of world.people.filter((item) => item.alive)) {
-    person.hunger = clamp(person.hunger + 0.4, 0, 100);
+    person.hunger = clamp(person.hunger + 0.22, 0, 100);
     let drain = 0.12;
     if (world.weather === "rain" && !placeOf(person.place).shelter) drain += 0.45;
     if (world.phase === "night" && person.intent?.kind !== "sleep") drain += 0.2;
@@ -487,6 +491,7 @@ export function say(world: World, speaker: Person, audience: Decision["audience"
     if (text.includes("DISLIKE") || text.includes("😠")) feel(world, speaker.id, other.id, "hate", 4);
   }
   speaker.belonging = clamp(speaker.belonging + (audience === "private" ? 6 : 4), 0, 100);
+  advanceMatter(world, speaker, listenerId, audience);
   pushEvent(world, {
     kind: "speech",
     speakerId: speaker.id,
@@ -497,6 +502,106 @@ export function say(world: World, speaker: Person, audience: Decision["audience"
     heardBy: heard.map((person) => person.id),
   });
   world.uncompiled += 1;
+}
+
+function bendTowardMatter(world: World, person: Person, decision: Decision): Decision {
+  const matter = person.matter;
+  if (!matter || person.hunger > 82 || person.distress || world.phase === "night") return decision;
+  const other = world.people.find((candidate) => candidate.id === matter.withId && candidate.alive);
+  if (!other || other.place !== person.place) return decision;
+  return {
+    ...decision,
+    speak: true,
+    audience: "private",
+    listenerId: other.id,
+    intentWord: matter.kind === "rival" ? "work" : matter.kind === "teach" ? "look" : "like",
+    topic: matter.kind === "teach" ? "work" : "friend",
+    tone: matter.kind === "rival" ? "ask" : "love",
+  };
+}
+
+function advanceMatter(world: World, speaker: Person, listenerId: string | null, audience: Decision["audience"]): void {
+  const matter = speaker.matter;
+  if (!matter || audience !== "private" || listenerId !== matter.withId) return;
+  const other = world.people.find((person) => person.id === matter.withId && person.alive);
+  if (!other) return;
+  matter.step += 1;
+  if (matter.kind === "court") feel(world, speaker.id, other.id, "love", 8);
+  else if (matter.kind === "rival") {
+    feel(world, speaker.id, other.id, "rivalry", 6);
+    feel(world, speaker.id, other.id, "love", 2);
+  } else if (matter.kind === "teach") feel(world, speaker.id, other.id, "love", 6);
+  else feel(world, speaker.id, other.id, "love", 7);
+  const bond = world.bonds.find((item) => bondKey(item.a, item.b) === bondKey(speaker.id, other.id));
+  const note = matter.kind === "court"
+    ? `${speaker.name} is drawing closer to ${other.name}`
+    : matter.kind === "rival"
+      ? `${speaker.name} is keeping pace with ${other.name}`
+      : matter.kind === "teach"
+        ? `${speaker.name} is teaching ${other.name}`
+        : `${speaker.name} is thawing toward ${other.name}`;
+  if (bond) bond.note = note;
+  if (matter.step < 3) return;
+  speaker.settledWith.push(other.id);
+  if (speaker.settledWith.length > 6) speaker.settledWith.shift();
+  speaker.matter = chooseMatter(world, speaker);
+  pushEvent(world, {
+    kind: "work",
+    speakerId: speaker.id,
+    audience: "town",
+    listenerId: other.id,
+    place: speaker.place,
+    text: `${speaker.name} and ${other.name} have a steadier tie.`,
+    heardBy: world.people.filter((person) => person.alive).map((person) => person.id),
+  });
+}
+
+export function ensureMatters(world: World): void {
+  for (const person of world.people) {
+    if (!person.matter) person.matter = chooseMatter(world, person);
+  }
+}
+
+function chooseMatter(world: World, person: Person): Matter | null {
+  if (!person.alive || person.band === "toddler" || person.band === "child") return null;
+  const blocked = new Set(person.settledWith);
+  const otherById = (id: string | null): Person | null => {
+    if (!id || id === person.id || blocked.has(id)) return null;
+    const other = world.people.find((candidate) => candidate.id === id && candidate.alive && candidate.band !== "toddler");
+    return other ?? null;
+  };
+  const spouse = otherById(person.spouse);
+  if (spouse) {
+    const bond = world.bonds.find((item) => bondKey(item.a, item.b) === bondKey(person.id, spouse.id));
+    if ((bond?.love ?? 0) < 90) return { withId: spouse.id, kind: "court", step: 0 };
+  }
+  const pupil = person.dependents.map((id) => otherById(id)).find((other) => other && (other.band === "child" || other.band === "youth"));
+  if (pupil && (person.band === "adult" || person.band === "elder")) return { withId: pupil.id, kind: "teach", step: 0 };
+  const rival = world.bonds
+    .filter((bond) => (bond.a === person.id || bond.b === person.id) && bond.rivalry >= 12)
+    .map((bond) => otherById(bond.a === person.id ? bond.b : bond.a))
+    .find((other): other is Person => Boolean(other));
+  if (rival && person.band !== "elder") return { withId: rival.id, kind: "rival", step: 0 };
+  const coldPool = world.people
+    .filter((other) => other.alive && other.id !== person.id && other.band !== "toddler" && other.band !== "child" && !blocked.has(other.id))
+    .map((other) => {
+      const bond = world.bonds.find((item) => bondKey(item.a, item.b) === bondKey(person.id, other.id));
+      const salt = [...`${person.id}${other.id}`].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+      return { other, love: bond?.love ?? 8, salt };
+    })
+    .sort((left, right) => left.love - right.love || left.salt - right.salt);
+  const coldestLove = coldPool[0]?.love;
+  const coldest = coldPool.filter((item) => item.love === coldestLove);
+  const cold = coldest[[...person.id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % Math.max(1, coldest.length)];
+  if (!cold) return null;
+  return { withId: cold.other.id, kind: "rift", step: 0 };
+}
+
+function publicMatter(world: World, person: Person): PublicPerson["matter"] {
+  if (!person.matter) return null;
+  const other = world.people.find((candidate) => candidate.id === person.matter?.withId);
+  if (!other) return null;
+  return { withName: other.name, kind: person.matter.kind, step: person.matter.step };
 }
 
 function remember(world: World, person: Person, text: string, isPrivate: boolean): void {
@@ -589,6 +694,8 @@ function tryBirth(world: World): void {
     authority: 0,
     bricks: 0,
     alive: true,
+    matter: null,
+    settledWith: [],
     intent: null,
     speech: null,
     memory: [],
@@ -714,6 +821,7 @@ export function snapshot(world: World, thinking: ReadonlySet<string> = new Set()
     mood: person.mood,
     innerNote: person.innerNote,
     because: person.because,
+    matter: publicMatter(world, person),
     doing: doingOf(person, thinking.has(person.id)),
     thinking: thinking.has(person.id) && person.intent === null,
     walk: walkOf(person),

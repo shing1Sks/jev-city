@@ -26,9 +26,9 @@ function scoreAction(person: Person, world: World, action: ActionOption): number
     watch: ["watch"],
   };
   if ((projectActs[person.self.ambition.project] ?? []).includes(action.kind)) score += 18;
-  if (action.kind === "eat" && person.hunger > 72) score += 70 + person.hunger;
-  if (action.kind === "eat" && person.hunger < 60) score -= 30;
-  if (action.kind === "eat" && (world.hour === 8 || world.hour === 13 || world.hour === 19)) score += 28;
+  if (action.kind === "eat" && person.hunger > 84) score += 70 + person.hunger;
+  if (action.kind === "eat" && person.hunger < 70) score -= 30;
+  if (action.kind === "eat" && person.hunger > 50 && (world.hour === 8 || world.hour === 13 || world.hour === 19)) score += 18;
   if (action.kind === "sleep" && (world.phase === "night" || person.energy < 28)) score += 74;
   if (action.kind === "rest" && person.energy < 40) score += 36;
   if (action.kind === "speak" && person.belonging < 42) score += 26;
@@ -37,7 +37,7 @@ function scoreAction(person: Person, world: World, action: ActionOption): number
   if (world.weather === "rain" && OUTDOOR.has(action.kind)) score -= 20;
   if (action.kind === "go" && action.place) {
     const shelter = placeOf(action.place).shelter;
-    if (person.hunger > 60 && (action.place === person.home || action.place === "hearth")) score += 48;
+    if (person.hunger > 80 && (action.place === person.home || action.place === "hearth")) score += 36;
     if ((world.phase === "night" || world.phase === "dusk") && action.place === person.home) score += 42;
     if (world.weather === "rain" && shelter) score += 16;
     if (action.place === "field" && person.self.pull.includes("farm")) score += 18;
@@ -49,6 +49,14 @@ function scoreAction(person: Person, world: World, action: ActionOption): number
     if (action.place !== person.place) score += 8 + ((world.tick + hashName(person.id) + action.place.length) % 5) * 4;
   }
   if (action.kind === "stay") score += 4;
+  const other = person.matter
+    ? world.people.find((candidate) => candidate.id === person.matter?.withId && candidate.alive)
+    : null;
+  const social = Boolean(
+    other && person.hunger < 78 && person.energy > 28 && world.phase !== "night" && (world.tick + hashName(person.id)) % 3 !== 2,
+  );
+  if (social && other && other.place !== person.place && action.kind === "go" && action.place === other.place) score += 80;
+  if (social && other && other.place === person.place && action.kind === "speak") score += 46;
   return score;
 }
 

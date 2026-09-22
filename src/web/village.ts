@@ -38,6 +38,15 @@ const treeLine = (y: number, start: number): Prop[] =>
     w: index % 2 === 0 ? 4.2 : 5.4,
   }));
 
+export const WORKS: Record<string, { src: string; w: number }> = {
+  garden: { src: "/craft/summer/Prop%20-%20Bushes%20Medium.png", w: 4.4 },
+  orchard: { src: "/craft/summer/Prop%20-%20Tree%20Medium.png", w: 5.4 },
+  stall: { src: "/craft/summer/Prop%20-%20Wooden%20Cart.png", w: 4.8 },
+  shrine: { src: "/craft/summer/Prop%20-%20Magic%20Stone%20Tower.png", w: 3.6 },
+  watch: { src: "/craft/summer/Prop%20-%20Watchtower%20Short.png", w: 3.4 },
+  house: { src: "/craft/summer/Prop%20-%20House.png", w: 5.6 },
+};
+
 export const PROPS: Prop[] = [
   ...treeLine(6, 8),
   ...treeLine(94, 6),

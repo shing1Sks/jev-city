@@ -98,7 +98,7 @@ export async function decideWithJev(world: World, ids: string[]): Promise<void> 
   }
 
   const state = {
-    town: "JEV City. Law has already removed illegal acts. Choose within the list. Custom is a preference, not a ban.",
+    town: "JEV City. Law has already removed illegal acts. Choose within the list. Custom is a preference, not a ban. If a person has a matter, spend the free turns reaching that one person and speaking with them in private. Do not chase food unless hunger is severe.",
     clock: clockLabel(world.hour, world.minute),
     phase: world.phase,
     weather: world.weather,
@@ -135,6 +135,13 @@ export async function decideWithJev(world: World, ids: string[]): Promise<void> 
         passion: person.self.ambition.passion,
         plan: person.self.ambition.plan,
         likes: person.self.ambition.likes,
+        matter: person.matter
+          ? {
+              with: world.people.find((other) => other.id === person.matter?.withId)?.name ?? person.matter.withId,
+              kind: person.matter.kind,
+              step: person.matter.step,
+            }
+          : null,
         nearby: othersHere(person, world).map((other) => other.name),
         bonds: world.bonds
           .filter((bond) => bond.a === person.id || bond.b === person.id)

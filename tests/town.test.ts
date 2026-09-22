@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createWorld, say, setClock, tick } from "../src/world/sim.js";
+import { reflexDecide } from "../src/world/reflex.js";
 import { legalActions } from "../src/world/rules.js";
 import { pathTo } from "../src/world/map.js";
 import { allowedIntentIds } from "../src/world/lexicon.js";
@@ -90,6 +91,49 @@ test("night brings the toddler home", () => {
   for (let step = 0; step < 40; step += 1) tick(world, "reflex");
   assert.equal(jevik.place, "market");
   assert.equal(jevik.distress, false);
+});
+
+test("three turns of a person's own work leave that work on the map", () => {
+  const world = createWorld();
+  const jevaary = person(world, "jevaary");
+  assert.equal(jevaary.self.ambition.project, "garden");
+  for (let step = 0; step < 3; step += 1) {
+    jevaary.intent = { actionId: "farm", kind: "farm", place: null, path: [], wait: 1, escort: false };
+    tick(world, "reflex");
+  }
+  const built = world.expansions.find((item) => item.ownerId === "jevaary");
+  assert.equal(built?.kind, "garden");
+  assert.equal(built?.label, "Jevaary's garden");
+});
+
+test("an adult keeps a person they are trying to reach", () => {
+  const world = createWorld();
+  const adults = world.people.filter((item) => item.band === "adult" || item.band === "elder" || item.band === "youth");
+  assert.ok(adults.every((item) => item.matter));
+  const jevaary = person(world, "jevaary");
+  const jevine = person(world, "jevine");
+  jevaary.matter = { withId: jevine.id, kind: "court", step: 0 };
+  jevaary.place = "field";
+  jevine.place = "grove";
+  setClock(world, 11, 0);
+  const decision = reflexDecide(world, "jevaary");
+  assert.equal(decision.actionId, "go_grove");
+});
+
+test("a private word to that person deepens the tie", () => {
+  const world = createWorld();
+  const jevaary = person(world, "jevaary");
+  const jevine = person(world, "jevine");
+  jevaary.matter = { withId: jevine.id, kind: "court", step: 0 };
+  jevaary.place = "grove";
+  jevine.place = "grove";
+  const before = world.bonds.find((bond) => bond.a === "jevaary" && bond.b === "jevine" || bond.a === "jevine" && bond.b === "jevaary");
+  const love = before?.love ?? 0;
+  say(world, jevaary, "private", jevine.id, "LIKE friend ❤️");
+  assert.equal(jevaary.matter?.step, 1);
+  const after = world.bonds.find((bond) => (bond.a === "jevaary" && bond.b === "jevine") || (bond.a === "jevine" && bond.b === "jevaary"));
+  assert.ok((after?.love ?? 0) > love);
+  assert.match(after?.note ?? "", /closer/);
 });
 
 test("a day of reflex keeps stores and bodies in range", () => {

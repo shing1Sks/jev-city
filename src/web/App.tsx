@@ -4,7 +4,7 @@ import { VISITORS_OPEN } from "../world/gates.js";
 import { INTENTS, TOPICS, TONES } from "../world/lexicon.js";
 import { placeOf } from "../world/map.js";
 import { lawLines } from "../world/rules.js";
-import type { PlaceId, PublicPerson, PublicState } from "../world/types.js";
+import type { Expansion, PlaceId, PublicPerson, PublicState } from "../world/types.js";
 import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
@@ -12,7 +12,7 @@ import { Progress } from "./components/ui/progress.js";
 import { ScrollArea } from "./components/ui/scroll-area.js";
 import { Separator } from "./components/ui/separator.js";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./components/ui/sheet.js";
-import { FEEL, LOOKS, PROPS, ROUTES, SPOTS, bodyScale } from "./village.js";
+import { FEEL, LOOKS, PROPS, ROUTES, SPOTS, WORKS, bodyScale } from "./village.js";
 import { VisitDock, VisitorSprite, readSession, type VisitSession } from "./visit.js";
 
 export function App() {
@@ -58,6 +58,7 @@ export function App() {
   }
   const glide = Math.min(1, Math.max(0, (now - seen.current.at) / 1000));
   const laid = layoutActors(state, fromPos.current, glide);
+  const laidWorks = spreadWorks(state?.expansions ?? []);
 
   const selected = state?.people.find((person) => person.id === selectedId) ?? null;
   const phase = state?.phase ?? "day";
@@ -98,11 +99,16 @@ export function App() {
           ))}
           <div className="veil" />
           {weather === "rain" ? <div className="rain" /> : null}
-          {state?.expansions.map((item) => (
-            <span key={item.id} className="mark-own" style={{ left: `${item.x}%`, top: `${item.y}%` }} title={item.label}>
-              {item.kind}
-            </span>
-          ))}
+          {state?.expansions.map((item) => {
+            const at = laidWorks[item.id] ?? item;
+            const look = WORKS[item.kind] ?? WORKS.garden;
+            return (
+              <span key={item.id} className="work" style={{ left: `${at.x}%`, top: `${at.y}%`, width: `${look?.w ?? 4}%` }} title={item.label}>
+                <img src={look?.src} alt="" draggable={false} />
+                <b>{item.label}</b>
+              </span>
+            );
+          })}
           {state?.people.filter((person) => person.alive !== false).map((person) => (
             <PersonSprite
               key={person.id}
@@ -190,6 +196,26 @@ function pointOf(person: PublicPerson): { x: number; y: number } {
     x: Number.isFinite(person.x) ? person.x : spot.x,
     y: Number.isFinite(person.y) ? person.y : spot.y,
   };
+}
+
+function spreadWorks(items: Expansion[]): Record<string, { x: number; y: number }> {
+  const placed: { x: number; y: number }[] = [];
+  const laid: Record<string, { x: number; y: number }> = {};
+  for (const item of [...items].sort((left, right) => left.id.localeCompare(right.id))) {
+    let x = item.x;
+    let y = item.y;
+    let tries = 0;
+    while (placed.some((other) => Math.hypot(other.x - x, other.y - y) < 7) && tries < 8) {
+      const turn = (tries + 1) * 1.1;
+      const ring = 7 + tries * 0.4;
+      x = Math.max(8, Math.min(92, item.x + Math.cos(turn) * ring));
+      y = Math.max(12, Math.min(88, item.y + Math.sin(turn) * ring * 0.75));
+      tries += 1;
+    }
+    placed.push({ x, y });
+    laid[item.id] = { x, y };
+  }
+  return laid;
 }
 
 function layoutActors(
@@ -319,10 +345,23 @@ function PersonSprite({
       <span className="caption">
         <strong>{person.name}</strong>
         <span>{person.doing || "here"}</span>
+        {person.matter ? <span className="how">{matterLine(person.matter)}</span> : null}
         <span className="how">{feeling}</span>
       </span>
     </button>
   );
+}
+
+function matterLine(matter: NonNullable<PublicPerson["matter"]>): string {
+  const aim = matter.kind === "court"
+    ? `closer to ${matter.withName}`
+    : matter.kind === "teach"
+      ? `teaching ${matter.withName}`
+      : matter.kind === "rival"
+        ? `keeping up with ${matter.withName}`
+        : `thawing toward ${matter.withName}`;
+  const step = matter.step <= 0 ? "not yet spoken" : matter.step === 1 ? "spoke once" : "spoke again";
+  return `${aim} · ${step}`;
 }
 
 function readLine(text: string): { what: string; how: string } {
@@ -387,6 +426,7 @@ function Dossier({
       <ScrollArea className="min-h-0 flex-1 pr-3">
         <div className="space-y-4 pb-6">
           <p className="text-sm">{person.doing}{person.because ? ` — ${person.because}` : ""}</p>
+          {person.matter ? <p className="text-sm text-primary">{matterLine(person.matter)}</p> : null}
           <p className="font-serif text-lg leading-snug">{person.mood}</p>
           {person.self.ambition ? (
             <div className="space-y-1 text-sm text-muted-foreground">
