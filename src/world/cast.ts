@@ -1,0 +1,413 @@
+import type { Ambition, Bond, Person, PlaceId, Self, Skill } from "./types.js";
+import { SKILLS, bandFor } from "./types.js";
+
+export const HOUSEHOLDS = [
+  { id: "vale", name: "Vale", color: "#c46a45" },
+  { id: "market", name: "Market", color: "#2f6a4a" },
+  { id: "porch", name: "Porch", color: "#355f78" },
+  { id: "grove", name: "Grove", color: "#6f8f4e" },
+] as const;
+
+export function householdColor(id: string): string {
+  return HOUSEHOLDS.find((house) => house.id === id)?.color ?? "#355f78";
+}
+
+export function householdName(id: string): string {
+  return HOUSEHOLDS.find((house) => house.id === id)?.name ?? id;
+}
+
+function skills(partial: Partial<Record<Skill, number>>): Record<Skill, number> {
+  const full = {} as Record<Skill, number>;
+  for (const skill of SKILLS) full[skill] = partial[skill] ?? 8;
+  return full;
+}
+
+interface Seed {
+  id: string;
+  name: string;
+  age: number;
+  gender: Person["gender"];
+  household: string;
+  home: PlaceId;
+  spouse: string | null;
+  guardians: string[];
+  dependents: string[];
+  self: Omit<Self, "ambition">;
+  skills: Partial<Record<Skill, number>>;
+  mood: string;
+}
+
+const SEEDS: Seed[] = [
+  {
+    id: "jevaary",
+    name: "Jevaary",
+    age: 38,
+    gender: "male",
+    household: "vale",
+    home: "vale",
+    spouse: "jevine",
+    guardians: [],
+    dependents: ["jevlin", "jevora"],
+    mood: "steady, already counting the day",
+    self: {
+      temper: "steady and spare with words",
+      want: "the field full before dusk",
+      fear: "a child still out after dark",
+      habit: "counts the food before he speaks",
+      pull: ["farm", "haul", "watch"],
+      custom: "provision",
+    },
+    skills: { farm: 72, haul: 68, cook: 22, forage: 28, teach: 18 },
+  },
+  {
+    id: "jevine",
+    name: "Jevine",
+    age: 36,
+    gender: "female",
+    household: "vale",
+    home: "vale",
+    spouse: "jevaary",
+    guardians: [],
+    dependents: ["jevlin", "jevora"],
+    mood: "warm, checking who has not eaten",
+    self: {
+      temper: "warm and organizing",
+      want: "the hearth busy and the children heard",
+      fear: "a quiet toddler",
+      habit: "says a person's name when she speaks",
+      pull: ["cook", "care", "mend"],
+      custom: "keep",
+    },
+    skills: { cook: 78, mend: 44, forage: 46, heal: 36, teach: 52, farm: 30 },
+  },
+  {
+    id: "jevlin",
+    name: "Jevlin",
+    age: 9,
+    gender: "male",
+    household: "vale",
+    home: "vale",
+    spouse: null,
+    guardians: ["jevaary", "jevine"],
+    dependents: [],
+    mood: "restless, hoping to be useful",
+    self: {
+      temper: "restless and proud of almost helping",
+      want: "to carry something heavy like Jevaary",
+      fear: "being sent inside while work is happening",
+      habit: "turns a chore into a game",
+      pull: ["play", "forage"],
+      custom: "learn",
+    },
+    skills: { play: 62, forage: 20, farm: 14 },
+  },
+  {
+    id: "jevora",
+    name: "Jevora",
+    age: 6,
+    gender: "female",
+    household: "vale",
+    home: "vale",
+    spouse: null,
+    guardians: ["jevaary", "jevine"],
+    dependents: [],
+    mood: "shy until someone looks at her",
+    self: {
+      temper: "shy, then suddenly bright",
+      want: "to stay near Jevine",
+      fear: "loud rain",
+      habit: "repeats the last kind word she heard",
+      pull: ["play"],
+      custom: "learn",
+    },
+    skills: { play: 70, cook: 10, forage: 12 },
+  },
+  {
+    id: "jevoric",
+    name: "Jevoric",
+    age: 67,
+    gender: "male",
+    household: "porch",
+    home: "porch",
+    spouse: null,
+    guardians: [],
+    dependents: ["jevina"],
+    mood: "slow, a little amused",
+    self: {
+      temper: "slow, exact, and amused",
+      want: "a young person to repeat the lesson back",
+      fear: "the town forgetting a rule",
+      habit: "answers a question with a question",
+      pull: ["teach", "speak"],
+      custom: "counsel",
+    },
+    skills: { teach: 88, farm: 36, heal: 32, cook: 24, haul: 6 },
+  },
+  {
+    id: "jevina",
+    name: "Jevina",
+    age: 16,
+    gender: "female",
+    household: "porch",
+    home: "porch",
+    spouse: null,
+    guardians: ["jevoric"],
+    dependents: [],
+    mood: "earnest, waiting to be trusted",
+    self: {
+      temper: "earnest and a little stubborn",
+      want: "Jevoric to trust her with a real task",
+      fear: "being treated as a small child",
+      habit: "offers help before she is asked",
+      pull: ["learn", "heal", "cook"],
+      custom: "learn",
+    },
+    skills: { teach: 22, cook: 36, mend: 30, heal: 28, forage: 24, play: 34 },
+  },
+  {
+    id: "jevon",
+    name: "Jevon",
+    age: 42,
+    gender: "male",
+    household: "market",
+    home: "market",
+    spouse: "jevara",
+    guardians: [],
+    dependents: ["jevik"],
+    mood: "quick, watching who comes and goes",
+    self: {
+      temper: "quick and social",
+      want: "the loft busy",
+      fear: "an empty store",
+      habit: "greets before he asks for anything",
+      pull: ["haul", "mend", "speak"],
+      custom: "provision",
+    },
+    skills: { haul: 58, mend: 34, farm: 24, cook: 22, teach: 16 },
+  },
+  {
+    id: "jevara",
+    name: "Jevara",
+    age: 29,
+    gender: "female",
+    household: "market",
+    home: "market",
+    spouse: "jevon",
+    guardians: [],
+    dependents: ["jevik"],
+    mood: "calm, one eye on Jevik",
+    self: {
+      temper: "precise and protective",
+      want: "Jevik in sight and the cloth finished",
+      fear: "losing the toddler in a crowd",
+      habit: "speaks softly and says it once more",
+      pull: ["mend", "care", "cook"],
+      custom: "keep",
+    },
+    skills: { mend: 74, cook: 58, heal: 22, teach: 26 },
+  },
+  {
+    id: "jevik",
+    name: "Jevik",
+    age: 3,
+    gender: "male",
+    household: "market",
+    home: "market",
+    spouse: null,
+    guardians: ["jevon", "jevara"],
+    dependents: [],
+    mood: "sticky and sudden",
+    self: {
+      temper: "sudden, loud when left",
+      want: "a lap or a game",
+      fear: "no familiar adult nearby",
+      habit: "points, then uses one word",
+      pull: ["play"],
+      custom: "learn",
+    },
+    skills: { play: 24 },
+  },
+  {
+    id: "jevella",
+    name: "Jevella",
+    age: 23,
+    gender: "female",
+    household: "grove",
+    home: "grove",
+    spouse: null,
+    guardians: [],
+    dependents: [],
+    mood: "alone on purpose, watching the path",
+    self: {
+      temper: "independent, dry, and observant",
+      want: "the grove path walked before noon",
+      fear: "the town crowding her hut",
+      habit: "reports the weather before a feeling",
+      pull: ["forage", "heal"],
+      custom: "provision",
+    },
+    skills: { forage: 76, heal: 68, farm: 22, cook: 30, haul: 26, teach: 14 },
+  },
+];
+
+const AMBITIONS: Record<string, Ambition> = {
+  jevaary: {
+    independence: "wants the field to be his own name, not just the household's",
+    love: "softest with Jevine, and frightened of failing the children",
+    passion: "the crop itself, the count of it, the dirt under the nail",
+    likes: "dawn, a full larder, quiet work",
+    dislikes: "waste, a child out after dark, being hurried",
+    career: "to be the grower the town trusts when the weather turns",
+    plan: "add a second garden row and teach Jevlin one real job",
+    project: "garden",
+  },
+  jevine: {
+    independence: "keeps the hearth as her domain even when the field calls",
+    love: "the children first, then Jevaary, said by name",
+    passion: "feeding people and knowing who has gone quiet",
+    likes: "a busy hearth, kind words, a named person",
+    dislikes: "a silent toddler, a skipped meal, cold leftovers",
+    career: "the keeper everyone comes to when they are hungry or lost",
+    plan: "a standing supper that the whole town can count on",
+    project: "garden",
+  },
+  jevlin: {
+    independence: "wants a task that is his, not a game the adults invented",
+    love: "admires Jevaary and shows it by trying to carry more",
+    passion: "being useful outdoors",
+    likes: "heavy things, races, being trusted",
+    dislikes: "being sent inside, being called small",
+    career: "to grow into the field beside his father",
+    plan: "earn one row of the garden as his own",
+    project: "garden",
+  },
+  jevora: {
+    independence: "quiet until she chooses someone, then she stays",
+    love: "sticks to Jevine and copies the last kind word",
+    passion: "play that turns into a little song or a story",
+    likes: "sitting close, flowers, being invited",
+    dislikes: "loud rain, being left in a crowd",
+    career: "too young for a trade, but she wants to be the one who remembers",
+    plan: "learn every name in the town",
+    project: "shrine",
+  },
+  jevoric: {
+    independence: "answers to the lesson, not to being rushed",
+    love: "patient with Jevina, proud when she repeats a rule back",
+    passion: "teaching until the young can say it themselves",
+    likes: "questions, exact words, a slow afternoon",
+    dislikes: "forgotten rules, noise without a point",
+    career: "the town's memory, while he still has the voice for it",
+    plan: "leave Jevina able to teach without him",
+    project: "shrine",
+  },
+  jevina: {
+    independence: "will not be treated as a child if she can do the work",
+    love: "wants Jevoric's trust more than praise",
+    passion: "learning a real craft, hands first",
+    likes: "being asked, a hard task, the porch in the morning",
+    dislikes: "being dismissed, empty errands",
+    career: "to stand as the next teacher, or a healer if the grove will have her",
+    plan: "finish one lesson so well that Jevoric gives her the next",
+    project: "shrine",
+  },
+  jevon: {
+    independence: "the loft is his stage, and he likes being the one who greets",
+    love: "fond of Jevara, watchful of Jevik, a little vain about both",
+    passion: "exchange, news, who is carrying what",
+    likes: "a busy door, a greeting, a good trade",
+    dislikes: "an empty store, being ignored",
+    career: "the trader the other households come to first",
+    plan: "build the loft into a stall the whole square uses",
+    project: "stall",
+  },
+  jevara: {
+    independence: "her cloth and her eye on Jevik are not up for debate",
+    love: "Jevik in sight, Jeven's greetings taken softly",
+    passion: "mending until a thing is right, then saying it once more",
+    likes: "finished cloth, a quiet child, precise hands",
+    dislikes: "a crowd she cannot see through, rushed seams",
+    career: "the mender people trust with their good things",
+    plan: "a stall of her own cloth beside Jevon's trade",
+    project: "stall",
+  },
+  jevik: {
+    independence: "points at what he wants and expects the world to come closer",
+    love: "a lap, a familiar voice, Jevara most of all",
+    passion: "play, and being carried",
+    likes: "games, food, being held",
+    dislikes: "being alone, loud strangers",
+    career: "none yet",
+    plan: "stay near someone who knows his name",
+    project: "garden",
+  },
+  jevella: {
+    independence: "the grove is hers and she will not have it crowded",
+    love: "wary, but she softens for Jevine and for anyone actually hurt",
+    passion: "the path, the herbs, weather read before feelings",
+    likes: "early walks, quiet, a true report",
+    dislikes: "the town pressing in, small talk with no news",
+    career: "the forager and healer people send for, not a neighbor they manage",
+    plan: "an orchard edge that is still hers",
+    project: "orchard",
+  },
+};
+
+function personFrom(seed: Seed): Person {
+  return {
+    id: seed.id,
+    name: seed.name,
+    age: seed.age,
+    gender: seed.gender,
+    band: bandFor(seed.age),
+    household: seed.household,
+    home: seed.home,
+    spouse: seed.spouse,
+    guardians: seed.guardians,
+    dependents: seed.dependents,
+    self: { ...seed.self, ambition: AMBITIONS[seed.id] ?? AMBITIONS.jevaary },
+    skills: skills(seed.skills),
+    place: seed.home,
+    x: 0,
+    y: 0,
+    facing: "front",
+    hunger: 28,
+    energy: 82,
+    belonging: 58,
+    distress: false,
+    choresToday: 0,
+    projectProgress: 0,
+    intent: null,
+    speech: null,
+    memory: [],
+    mood: seed.mood,
+    innerNote: seed.self.habit,
+    because: "waking up at home",
+  };
+}
+
+function bond(a: string, b: string, score: number, note: string): Bond {
+  return { a, b, score, note };
+}
+
+export function createCast(): { people: Person[]; bonds: Bond[]; food: Record<string, number> } {
+  return {
+    people: SEEDS.map(personFrom),
+    food: { vale: 8, market: 6, porch: 5, grove: 4 },
+    bonds: [
+      bond("jevaary", "jevine", 86, "spouses who split the day between field and hearth"),
+      bond("jevaary", "jevlin", 84, "father and son"),
+      bond("jevaary", "jevora", 84, "father and daughter"),
+      bond("jevine", "jevlin", 86, "mother and son"),
+      bond("jevine", "jevora", 90, "mother and daughter, rarely apart"),
+      bond("jevlin", "jevora", 74, "siblings"),
+      bond("jevon", "jevara", 82, "spouses at the loft"),
+      bond("jevon", "jevik", 80, "father of a toddler"),
+      bond("jevara", "jevik", 92, "mother, keeps him in sight"),
+      bond("jevoric", "jevina", 78, "elder and granddaughter, teacher and apprentice"),
+      bond("jevine", "jevella", 48, "neighbors who trade food and herbs"),
+      bond("jevaary", "jevoric", 55, "respect, and a little impatience"),
+      bond("jevon", "jevella", 40, "he buys what she forages"),
+    ],
+  };
+}

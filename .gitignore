@@ -1,0 +1,9 @@
+node_modules/
+assets-src/
+dist/
+.env
+data/inner.json
+data/events.md
+data/world.json
+*.log
+.DS_Store

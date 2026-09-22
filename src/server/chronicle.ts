@@ -1,0 +1,231 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { renderChronicle } from "../world/sim.js";
+import type { World } from "../world/types.js";
+import { clockLabel } from "../world/types.js";
+import { dataDir } from "./env.js";
+
+export function writeChronicle(world: World): void {
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(resolve(dataDir, "events.md"), renderChronicle(world), "utf8");
+  writeFileSync(
+    resolve(dataDir, "inner.json"),
+    JSON.stringify(
+      {
+        chronicle: world.chronicle,
+        chronicleAt: world.chronicleAt,
+        people: world.people.map((person) => ({ id: person.id, mood: person.mood, innerNote: person.innerNote })),
+        bonds: world.bonds,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+export function loadInner(world: World): void {
+  const path = resolve(dataDir, "inner.json");
+  if (!existsSync(path)) return;
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
+      chronicle?: unknown;
+      chronicleAt?: unknown;
+      people?: { id?: string; mood?: string; innerNote?: string }[];
+      bonds?: { a?: string; b?: string; score?: number; note?: string }[];
+    };
+    if (typeof raw.chronicle === "string") world.chronicle = raw.chronicle;
+    if (typeof raw.chronicleAt === "string") world.chronicleAt = raw.chronicleAt;
+    for (const item of raw.people ?? []) {
+      const person = world.people.find((candidate) => candidate.id === item.id);
+      if (!person) continue;
+      if (item.mood) person.mood = item.mood;
+      if (item.innerNote) person.innerNote = item.innerNote;
+    }
+    for (const item of raw.bonds ?? []) {
+      const bond = world.bonds.find(
+        (candidate) =>
+          (candidate.a === item.a && candidate.b === item.b) || (candidate.a === item.b && candidate.b === item.a),
+      );
+      if (!bond) continue;
+      if (typeof item.score === "number") bond.score = item.score;
+      if (item.note) bond.note = item.note;
+    }
+  } catch {
+    world.gemini.lastError = "Could not read data/inner.json, so the town started from the seed.";
+  }
+}
+
+interface GeminiPerson {
+  id?: unknown;
+  mood?: unknown;
+  note?: unknown;
+}
+
+interface GeminiBond {
+  a?: unknown;
+  b?: unknown;
+  note?: unknown;
+}
+
+function asText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export async function compactWithGemini(world: World): Promise<void> {
+  const key = process.env.OPENAI_API_KEY;
+  world.gemini.model = process.env.STORY_MODEL || "gpt-6-luna";
+  if (!key) {
+    world.gemini.configured = false;
+    world.gemini.status = "off";
+    world.gemini.lastError = "OPENAI_API_KEY is not set";
+    return;
+  }
+  world.gemini.configured = true;
+  world.gemini.status = "working";
+  try {
+    const text = await generate(key, world.gemini.model, promptFor(world));
+    applyUpdate(world, text);
+    world.gemini.status = "ready";
+    world.gemini.lastError = null;
+    world.gemini.calls += 1;
+    world.uncompiled = 0;
+    world.chronicleAt = `${clockLabel(world.hour, world.minute)} village time`;
+    writeChronicle(world);
+  } catch (error) {
+    world.gemini.status = "error";
+    world.gemini.lastError = error instanceof Error ? error.message : "Storyteller failed";
+  }
+}
+
+function promptFor(world: World): string {
+  const people = world.people.map((person) => ({
+    id: person.id,
+    name: person.name,
+    passion: person.self.ambition.passion,
+    love: person.self.ambition.love,
+    plan: person.self.ambition.plan,
+    likes: person.self.ambition.likes,
+    dislikes: person.self.ambition.dislikes,
+    project: person.self.ambition.project,
+    mood: person.mood,
+    place: person.place,
+  }));
+  const recent = world.log.slice(-12).map((event) => `${event.clock} ${event.audience === "private" ? "(private) " : ""}${event.text}`);
+  const built = world.expansions.map((item) => item.label);
+  return [
+    "Write the public story of JEV City for people watching.",
+    "Return JSON with chronicle, story, people, bonds.",
+    "story.headline is one line. story.body is two sentences of what is happening, including gossip, work, weather, love, and ambition. story.gossip is exactly 3 short lines a neighbor would repeat.",
+    "Do not quote private speech in story.body or story.gossip. You may hint that two people spoke aside.",
+    "chronicle is the same public memory in one paragraph.",
+    "people: for each id, mood and note, one short sentence each, consistent with their passion, love, likes, and plan.",
+    "bonds: only pairs that changed, with a one-sentence note.",
+    JSON.stringify({
+      hour: clockLabel(world.hour, world.minute),
+      weather: world.weather,
+      phase: world.phase,
+      built,
+      people,
+      recent,
+    }),
+  ].join("\n");
+}
+
+function applyUpdate(world: World, raw: string): void {
+  const parsed = JSON.parse(stripFence(raw)) as {
+    chronicle?: unknown;
+    people?: unknown;
+    bonds?: unknown;
+    story?: { headline?: unknown; body?: unknown; gossip?: unknown };
+  };
+  const chronicle = asText(parsed.chronicle);
+  if (chronicle) world.chronicle = chronicle;
+  const story = parsed.story;
+  if (story && typeof story === "object") {
+    const headline = asText(story.headline);
+    const body = asText(story.body);
+    const gossip = Array.isArray(story.gossip) ? story.gossip.map(asText).filter(Boolean).slice(0, 3) : [];
+    if (headline) world.story.headline = headline.slice(0, 120);
+    if (body) world.story.body = body.slice(0, 500);
+    if (gossip.length) world.story.gossip = gossip;
+    world.story.at = clockLabel(world.hour, world.minute);
+  }
+  if (Array.isArray(parsed.people)) {
+    for (const item of parsed.people as GeminiPerson[]) {
+      const id = asText(item.id);
+      const person = world.people.find((candidate) => candidate.id === id);
+      if (!person) continue;
+      const mood = asText(item.mood);
+      const note = asText(item.note);
+      if (mood) person.mood = mood.slice(0, 180);
+      if (note) person.innerNote = note.slice(0, 220);
+    }
+  }
+  if (Array.isArray(parsed.bonds)) {
+    for (const item of parsed.bonds as GeminiBond[]) {
+      const a = asText(item.a);
+      const b = asText(item.b);
+      const note = asText(item.note);
+      if (!note) continue;
+      const bond = world.bonds.find(
+        (candidate) =>
+          (candidate.a === a && candidate.b === b) || (candidate.a === b && candidate.b === a),
+      );
+      if (bond) bond.note = note.slice(0, 220);
+    }
+  }
+}
+
+function stripFence(raw: string): string {
+  return raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+}
+
+async function generate(key: string, model: string, prompt: string): Promise<string> {
+  const withLowReasoning = await request(key, model, prompt, { reasoning_effort: "low" });
+  if (withLowReasoning.ok) return withLowReasoning.text;
+  if (withLowReasoning.status !== 400) throw new Error(withLowReasoning.error);
+  const plain = await request(key, model, prompt, {});
+  if (!plain.ok) throw new Error(plain.error);
+  return plain.text;
+}
+
+async function request(
+  key: string,
+  model: string,
+  prompt: string,
+  extra: Record<string, unknown>,
+): Promise<{ ok: true; text: string } | { ok: false; status: number; error: string }> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_completion_tokens: 700,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You narrate JEV City for visitors. You write gossip and the public story. You never choose a resident's next act. JSON only.",
+        },
+        { role: "user", content: prompt },
+      ],
+      ...extra,
+    }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 180);
+    return { ok: false, status: response.status, error: `Luna ${response.status}: ${detail}` };
+  }
+  const body = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const text = body.choices?.[0]?.message?.content ?? "";
+  if (!text.trim()) return { ok: false, status: 502, error: "Luna returned an empty story" };
+  return { ok: true, text };
+}
