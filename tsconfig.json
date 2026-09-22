@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/server/**/*.ts", "src/world/**/*.ts", "tests/**/*.ts"]
+  "include": ["api/**/*.ts", "src/server/**/*.ts", "src/world/**/*.ts", "tests/**/*.ts"]
 }

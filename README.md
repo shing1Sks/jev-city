@@ -31,7 +31,13 @@ Visitor entry is off. `VISITORS_OPEN` in `src/world/gates.ts` is `false`, and `P
 - `@@ Name Name Name` reaches up to three people
 - Suggest marks the line as something they might take up
 
-Ten visitors from one address. Firestore is set up to hold `town/state`, `visitors`, `visitorLog`, and `ipSeats` once `firestore.rules` is published. A Vercel deploy still cannot keep the one-second clock alive inside a serverless function. Firestore keeps the town between runs of the Node server.
+Ten visitors from one address. Firestore is set up to hold `town/state`, `visitors`, `visitorLog`, and `ipSeats` once `firestore.rules` is published. A Vercel deploy cannot keep an indefinite one-second clock alive inside a serverless function, so the batch runner below bounds each run. Firestore keeps the town between runs.
+
+## Vercel batch runner
+
+The Vercel deployment can also run the town in bounded batches. `/api/stream` owns a Firestore lease, advances 120 ticks (two in-world days; each tick is 24 in-world minutes) over about two real minutes, saves the full world, and releases the lease. The browser reconnects for the next batch while it remains open. Other viewers receive read-only snapshots while a batch is running.
+
+Set `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `TYPESAFE_API_KEY`, and `OPENAI_API_KEY` in Vercel. The Firestore rules must allow the server's state and lease writes; do not leave the collections anonymously writable for a public deployment.
 
 ## What the residents can change
 

@@ -129,30 +129,28 @@ export async function addVisitorLog(id: string, line: string): Promise<void> {
 export async function saveTown(world: World): Promise<void> {
   try {
     await writeDoc("town/state", {
+      tick: world.tick,
+      hour: world.hour,
+      minute: world.minute,
+      phase: world.phase,
+      weather: world.weather,
       day: world.day,
       solMinutes: world.solMinutes,
+      needsSummary: world.needsSummary,
+      summaryFor: world.summaryFor,
       story: world.story,
       chronicle: world.chronicle,
+      chronicleAt: world.chronicleAt,
       food: world.food,
       wood: world.wood,
       stone: world.stone,
       cloth: world.cloth,
       expansions: world.expansions,
       bonds: world.bonds,
-      people: world.people.map((person) => ({
-        id: person.id,
-        place: person.place,
-        x: person.x,
-        y: person.y,
-        hunger: person.hunger,
-        energy: person.energy,
-        mood: person.mood,
-        innerNote: person.innerNote,
-        alive: person.alive,
-        bricks: person.bricks,
-        authority: person.authority,
-        age: person.age,
-      })),
+      log: world.log,
+      nextEventId: world.nextEventId,
+      uncompiled: world.uncompiled,
+      people: world.people,
       visitors: world.visitors,
       visitorLog: world.visitorLog.slice(-40),
     });
@@ -165,6 +163,11 @@ export async function loadTown(world: World): Promise<void> {
   try {
     const saved = await readDoc("town/state");
     if (!saved) return;
+    if (typeof saved.tick === "number") world.tick = saved.tick;
+    if (typeof saved.hour === "number") world.hour = saved.hour;
+    if (typeof saved.minute === "number") world.minute = saved.minute;
+    if (typeof saved.phase === "string") world.phase = saved.phase as World["phase"];
+    if (typeof saved.weather === "string") world.weather = saved.weather as World["weather"];
     if (typeof saved.day === "number") world.day = saved.day;
     if (typeof saved.solMinutes === "number") {
       world.solMinutes = saved.solMinutes;
@@ -173,18 +176,25 @@ export async function loadTown(world: World): Promise<void> {
     }
     if (saved.story && typeof saved.story === "object") world.story = saved.story as World["story"];
     if (typeof saved.chronicle === "string") world.chronicle = saved.chronicle;
+    if (typeof saved.chronicleAt === "string" || saved.chronicleAt === null) world.chronicleAt = saved.chronicleAt as string | null;
+    if (typeof saved.needsSummary === "boolean") world.needsSummary = saved.needsSummary;
+    if (typeof saved.summaryFor === "number" || saved.summaryFor === null) world.summaryFor = saved.summaryFor as number | null;
     if (saved.food && typeof saved.food === "object") world.food = saved.food as World["food"];
     if (saved.wood && typeof saved.wood === "object") world.wood = saved.wood as World["wood"];
     if (saved.stone && typeof saved.stone === "object") world.stone = saved.stone as World["stone"];
     if (saved.cloth && typeof saved.cloth === "object") world.cloth = saved.cloth as World["cloth"];
     if (Array.isArray(saved.expansions)) world.expansions = saved.expansions as World["expansions"];
     if (Array.isArray(saved.bonds)) world.bonds = saved.bonds as World["bonds"];
+    if (Array.isArray(saved.log)) world.log = saved.log as World["log"];
+    if (typeof saved.nextEventId === "number") world.nextEventId = saved.nextEventId;
+    if (typeof saved.uncompiled === "number") world.uncompiled = saved.uncompiled;
     if (Array.isArray(saved.visitors)) world.visitors = saved.visitors as World["visitors"];
     if (Array.isArray(saved.visitorLog)) world.visitorLog = saved.visitorLog as string[];
     if (Array.isArray(saved.people)) {
       for (const item of saved.people as { id?: string; place?: World["people"][number]["place"]; x?: number; y?: number; mood?: string; innerNote?: string; alive?: boolean; bricks?: number; authority?: number; age?: number; hunger?: number; energy?: number }[]) {
         const person = world.people.find((candidate) => candidate.id === item.id);
         if (!person) continue;
+        Object.assign(person, item);
         if (item.place) person.place = item.place;
         if (typeof item.x === "number") person.x = item.x;
         if (typeof item.y === "number") person.y = item.y;
@@ -198,6 +208,39 @@ export async function loadTown(world: World): Promise<void> {
         if (typeof item.energy === "number") person.energy = item.energy;
       }
     }
+  } catch (error) {
+    note(error);
+  }
+}
+
+export async function claimTownLease(owner: string, ttlMs: number): Promise<boolean> {
+  try {
+    const current = await readDoc("town/runner");
+    const until = typeof current?.until === "number" ? current.until : 0;
+    if (current?.owner && current.owner !== owner && until > Date.now()) return false;
+    await writeDoc("town/runner", { owner, until: Date.now() + ttlMs });
+    const claimed = await readDoc("town/runner");
+    return claimed?.owner === owner;
+  } catch (error) {
+    note(error);
+    return false;
+  }
+}
+
+export async function townLeaseOwner(owner: string): Promise<boolean> {
+  try {
+    const current = await readDoc("town/runner");
+    return current?.owner === owner && typeof current.until === "number" && current.until > Date.now();
+  } catch (error) {
+    note(error);
+    return false;
+  }
+}
+
+export async function releaseTownLease(owner: string): Promise<void> {
+  try {
+    const current = await readDoc("town/runner");
+    if (current?.owner === owner) await writeDoc("town/runner", { owner: "", until: 0 });
   } catch (error) {
     note(error);
   }
