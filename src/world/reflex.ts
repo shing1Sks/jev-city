@@ -21,6 +21,7 @@ function scoreAction(person: Person, world: World, action: ActionOption): number
     garden: ["farm", "cook"],
     orchard: ["forage"],
     stall: ["mend", "haul"],
+    house: ["build", "haul"],
     shrine: ["teach", "learn"],
     watch: ["watch"],
   };

@@ -7,13 +7,23 @@
     "dev": "concurrently -n city,web -c cyan,green \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "node --import tsx src/server/index.ts",
     "dev:web": "vite",
-    "test": "node --import tsx --test tests/town.test.ts",
+    "test": "node --import tsx --test tests/town.test.ts tests/visit.test.ts",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-progress": "^1.1.16",
+    "@radix-ui/react-scroll-area": "^1.2.18",
+    "@radix-ui/react-slot": "^1.3.3",
+    "@tailwindcss/vite": "^4.3.3",
     "@typesafe-ai/sdk": "^0.6.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.47.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -132,7 +132,7 @@ export function legalActions(person: Person, world: World): ActionOption[] {
   const acts: ActionOption[] = [option("stay", "stay", "Stay", "Remain here and watch.")];
 
   if (person.band !== "toddler") {
-    for (const place of ["grove", "field", "well", "vale", "square", "hearth", "market", "porch"] as PlaceId[]) {
+    for (const place of ["grove", "mill", "field", "well", "vale", "square", "hearth", "market", "rise", "porch"] as PlaceId[]) {
       if (place !== person.place) {
         const escort = place === person.home && world.people.some(
           (kid) => kid.band === "toddler" && kid.household === person.household && kid.place === person.place && kid.place !== kid.home,
@@ -184,6 +184,9 @@ export function legalActions(person: Person, world: World): ActionOption[] {
     if (at(person, "porch", "square")) work("teach", "Teach", "Give a lesson.");
     work("heal", "Heal", "Tend someone worn down.");
     maybeCare(person, world, acts);
+    if ((person.place === person.home || person.place === "rise") && person.bricks < 6 && (world.wood[person.household] ?? 0) > 0 && (world.stone[person.household] ?? 0) > 0) {
+      work("build", "Lay a brick", "Spend one wood and one stone on a wall of your own.");
+    }
     return trimHeavy(person, acts);
   }
 
@@ -195,6 +198,9 @@ export function legalActions(person: Person, world: World): ActionOption[] {
   if (at(person, "porch", "square") && person.skills.teach >= 30) work("teach", "Teach", "Teach whoever is listening.");
   work("heal", "Heal", "Tend someone worn down.");
   if ((world.phase === "night" || world.phase === "dusk") && person.place === "square") work("watch", "Watch", "Keep the square.");
+  if ((person.place === person.home || person.place === "rise") && person.bricks < 6 && (world.wood[person.household] ?? 0) > 0 && (world.stone[person.household] ?? 0) > 0) {
+    work("build", "Lay a brick", "Spend one wood and one stone on a wall of your own.");
+  }
   maybeCare(person, world, acts);
   return trimHeavy(person, acts);
 }

@@ -16,7 +16,9 @@ export type PlaceId =
   | "square"
   | "hearth"
   | "market"
-  | "porch";
+  | "porch"
+  | "mill"
+  | "rise";
 
 export type ActionKind =
   | "stay"
@@ -35,6 +37,7 @@ export type ActionKind =
   | "play"
   | "care"
   | "watch"
+  | "build"
   | "speak";
 
 export interface Place {
@@ -46,7 +49,7 @@ export interface Place {
   neighbors: PlaceId[];
 }
 
-export type ProjectKind = "orchard" | "garden" | "stall" | "shrine" | "watch";
+export type ProjectKind = "orchard" | "garden" | "stall" | "shrine" | "watch" | "house";
 
 export interface Ambition {
   independence: string;
@@ -98,7 +101,7 @@ export const HOP_TICKS = 4;
 
 export type Facing = "front" | "back" | "left" | "right";
 
-export type Feeling = "content" | "hungry" | "tired" | "lonely" | "afraid" | "playing";
+export type Feeling = "content" | "hungry" | "tired" | "lonely" | "afraid" | "playing" | "jealous" | "bitter" | "rival";
 
 export interface Walk {
   from: PlaceId;
@@ -142,6 +145,9 @@ export interface Person {
   distress: boolean;
   choresToday: number;
   projectProgress: number;
+  authority: number;
+  bricks: number;
+  alive: boolean;
   intent: ActiveIntent | null;
   speech: SpeechBubble | null;
   memory: MemoryLine[];
@@ -155,6 +161,10 @@ export interface Bond {
   b: string;
   score: number;
   note: string;
+  love: number;
+  jealousy: number;
+  hate: number;
+  rivalry: number;
 }
 
 export interface CityEvent {
@@ -203,13 +213,44 @@ export interface GeminiStatus {
   model: string;
 }
 
+export interface TownVisitor {
+  id: string;
+  name: string;
+  ipHash: string;
+  place: PlaceId;
+  x: number;
+  y: number;
+  facing: Facing;
+  dest: PlaceId | null;
+  speech: { text: string; ticks: number } | null;
+  note: string;
+}
+
+export interface VisitorMark {
+  id: string;
+  name: string;
+  place: PlaceId;
+  x: number;
+  y: number;
+  facing: Facing;
+  speech: { text: string; ticks: number } | null;
+  note: string;
+}
+
 export interface World {
   tick: number;
   hour: number;
   minute: number;
   phase: Phase;
   weather: Weather;
+  day: number;
+  solMinutes: number;
+  needsSummary: boolean;
+  summaryFor: number | null;
   food: Record<string, number>;
+  wood: Record<string, number>;
+  stone: Record<string, number>;
+  cloth: Record<string, number>;
   people: Person[];
   bonds: Bond[];
   log: CityEvent[];
@@ -218,6 +259,8 @@ export interface World {
   chronicleAt: string | null;
   story: TownStory;
   expansions: Expansion[];
+  visitors: TownVisitor[];
+  visitorLog: string[];
   uncompiled: number;
   soul: SoulStatus;
   gemini: GeminiStatus;
@@ -240,6 +283,9 @@ export interface PublicPerson {
   facing: Facing;
   moving: boolean;
   feeling: Feeling;
+  authority: number;
+  bricks: number;
+  alive: boolean;
   hunger: number;
   energy: number;
   belonging: number;
@@ -271,6 +317,7 @@ export interface TownStory {
   body: string;
   gossip: string[];
   at: string | null;
+  day: number | null;
 }
 
 export interface PublicState {
@@ -280,7 +327,11 @@ export interface PublicState {
   clock: string;
   phase: Phase;
   weather: Weather;
+  day: number;
   food: Record<string, number>;
+  wood: Record<string, number>;
+  stone: Record<string, number>;
+  cloth: Record<string, number>;
   people: PublicPerson[];
   bonds: Bond[];
   log: CityEvent[];
@@ -288,6 +339,8 @@ export interface PublicState {
   chronicleAt: string | null;
   story: TownStory;
   expansions: Expansion[];
+  visitors: VisitorMark[];
+  visitorLog: string[];
   soul: SoulStatus;
   gemini: GeminiStatus;
 }

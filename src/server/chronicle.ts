@@ -114,20 +114,26 @@ function promptFor(world: World): string {
   const recent = world.log.slice(-12).map((event) => `${event.clock} ${event.audience === "private" ? "(private) " : ""}${event.text}`);
   const built = world.expansions.map((item) => item.label);
   return [
-    "Write the public story of JEV City for people watching.",
+    `This is the close of day ${world.summaryFor ?? world.day}. Write only what already happened.`,
+    "Past tense. Key points: work, weather, love, jealousy, rivalry, births, deaths, and anything someone built.",
+    "Do not greet the morning. Do not say the day is young, that people are just waking, or that nothing has happened.",
+    "If the log is thin, name the few things that did occur. Do not invent a fresh start.",
+    "Visitors are outsiders who walked in. If one is listed, their talk and suggestions are part of the day. Do not invent visitors who are not listed.",
     "Return JSON with chronicle, story, people, bonds.",
-    "story.headline is one line. story.body is two sentences of what is happening, including gossip, work, weather, love, and ambition. story.gossip is exactly 3 short lines a neighbor would repeat.",
+    "story.headline is one line about the day that ended. story.body is two sentences of that finished day. story.gossip is exactly 3 short lines a neighbor would repeat the next morning.",
     "Do not quote private speech in story.body or story.gossip. You may hint that two people spoke aside.",
     "chronicle is the same public memory in one paragraph.",
     "people: for each id, mood and note, one short sentence each, consistent with their passion, love, likes, and plan.",
     "bonds: only pairs that changed, with a one-sentence note.",
     JSON.stringify({
+      closedDay: world.summaryFor ?? world.day,
       hour: clockLabel(world.hour, world.minute),
       weather: world.weather,
       phase: world.phase,
       built,
       people,
       recent,
+      visitors: world.visitors.map((visitor) => ({ name: visitor.name, place: visitor.place, note: visitor.note })),
     }),
   ].join("\n");
 }
@@ -149,7 +155,8 @@ function applyUpdate(world: World, raw: string): void {
     if (headline) world.story.headline = headline.slice(0, 120);
     if (body) world.story.body = body.slice(0, 500);
     if (gossip.length) world.story.gossip = gossip;
-    world.story.at = clockLabel(world.hour, world.minute);
+    world.story.day = world.summaryFor ?? world.day;
+    world.story.at = world.summaryFor ? "end of day" : "so far";
   }
   if (Array.isArray(parsed.people)) {
     for (const item of parsed.people as GeminiPerson[]) {
@@ -204,7 +211,7 @@ async function request(
     },
     body: JSON.stringify({
       model,
-      max_completion_tokens: 700,
+      max_completion_tokens: 2000,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -223,9 +230,17 @@ async function request(
     return { ok: false, status: response.status, error: `Luna ${response.status}: ${detail}` };
   }
   const body = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
+    choices?: { finish_reason?: string; message?: { content?: string | { text?: string }[] | null } }[];
   };
-  const text = body.choices?.[0]?.message?.content ?? "";
-  if (!text.trim()) return { ok: false, status: 502, error: "Luna returned an empty story" };
+  const choice = body.choices?.[0];
+  const content = choice?.message?.content;
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((part) => part.text ?? "").join("")
+      : "";
+  if (!text.trim()) {
+    return { ok: false, status: 502, error: `Luna returned an empty story (${choice?.finish_reason ?? "no choice"})` };
+  }
   return { ok: true, text };
 }

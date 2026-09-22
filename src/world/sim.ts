@@ -14,7 +14,7 @@ import type {
   Skill,
   World,
 } from "./types.js";
-import { HOP_TICKS, SKILLS, bondKey, clamp, clockLabel, phaseOf } from "./types.js";
+import { HOP_TICKS, SKILLS, bandFor, bondKey, clamp, clockLabel, phaseOf } from "./types.js";
 
 const WEATHERS = ["clear", "clear", "cloudy", "rain", "wind", "clear"] as const;
 
@@ -40,7 +40,14 @@ export function createWorld(): World {
     minute: 0,
     phase: "day",
     weather: "clear",
+    day: 1,
+    solMinutes: 7 * 60,
+    needsSummary: false,
+    summaryFor: null,
     food: cast.food,
+    wood: cast.wood,
+    stone: cast.stone,
+    cloth: cast.cloth,
     people: cast.people,
     bonds: cast.bonds,
     log: [],
@@ -48,12 +55,15 @@ export function createWorld(): World {
     chronicle: "",
     chronicleAt: null,
     story: {
-      headline: "Morning in JEV City",
-      body: "Ten people are awake with plans of their own. The field, the hearth, the loft, and the grove can still change if they keep at the work they love.",
-      gossip: ["Nothing scandalous yet. The day is young."],
+      headline: "",
+      body: "",
+      gossip: [],
       at: null,
+      day: null,
     },
     expansions: [],
+    visitors: [],
+    visitorLog: [],
     uncompiled: 0,
     soul: {
       mode: "reflex",
@@ -78,15 +88,16 @@ export function createWorld(): World {
 export function setClock(world: World, hour: number, minute: number): void {
   world.hour = ((hour % 24) + 24) % 24;
   world.minute = Math.max(0, Math.min(59, minute));
+  world.solMinutes = world.hour * 60 + world.minute;
   world.phase = phaseOf(world.hour);
 }
 
 export function tick(world: World, mode: "reflex" | "open" = "reflex"): string[] {
   advanceClock(world);
   decay(world);
-  for (const person of world.people) applyLaw(world, person);
-  for (const person of world.people) progress(world, person);
-  const deciders = world.people.filter((person) => person.intent === null).map((person) => person.id);
+  for (const person of world.people.filter((item) => item.alive)) applyLaw(world, person);
+  for (const person of world.people.filter((item) => item.alive)) progress(world, person);
+  const deciders = world.people.filter((person) => person.alive && person.intent === null).map((person) => person.id);
   if (mode === "reflex") {
     for (const id of deciders) applyDecision(world, reflexDecide(world, id));
     return [];
@@ -108,15 +119,20 @@ export function applyDecision(world: World, decision: Decision): void {
 }
 
 function advanceClock(world: World): void {
-  world.minute += 10;
-  let hourChanged = false;
-  if (world.minute >= 60) {
-    world.minute -= 60;
-    world.hour = (world.hour + 1) % 24;
-    hourChanged = true;
-    if (world.hour === 5) {
-      for (const person of world.people) person.choresToday = 0;
-    }
+  const previousHour = world.hour;
+  world.solMinutes += 24;
+  if (world.solMinutes >= 1440) {
+    world.summaryFor = world.day;
+    world.solMinutes -= 1440;
+    world.day += 1;
+    world.needsSummary = true;
+    ageAndLife(world);
+  }
+  world.hour = Math.floor(world.solMinutes / 60) % 24;
+  world.minute = world.solMinutes % 60;
+  const hourChanged = world.hour !== previousHour;
+  if (hourChanged && world.hour === 5) {
+    for (const person of world.people) person.choresToday = 0;
   }
   world.tick += 1;
   world.phase = phaseOf(world.hour);
@@ -134,7 +150,7 @@ function advanceClock(world: World): void {
 }
 
 function decay(world: World): void {
-  for (const person of world.people) {
+  for (const person of world.people.filter((item) => item.alive)) {
     person.hunger = clamp(person.hunger + 0.4, 0, 100);
     let drain = 0.12;
     if (world.weather === "rain" && !placeOf(person.place).shelter) drain += 0.45;
@@ -301,12 +317,14 @@ function finish(world: World, person: Person, kind: ActionOption["kind"]): void 
       break;
     case "forage":
       addFood(1);
+      world.wood[household] = clamp((world.wood[household] ?? 0) + 1, 0, 24);
       gain(person, "forage");
       person.energy = clamp(person.energy - 6, 0, 100);
       if (person.band === "child") person.choresToday += 1;
       break;
     case "haul":
       addFood(1);
+      world.stone[household] = clamp((world.stone[household] ?? 0) + 1, 0, 24);
       gain(person, "haul");
       person.energy = clamp(person.energy - 12, 0, 100);
       break;
@@ -318,6 +336,7 @@ function finish(world: World, person: Person, kind: ActionOption["kind"]): void 
       person.energy = clamp(person.energy - 5, 0, 100);
       break;
     case "mend":
+      if ((world.cloth[household] ?? 0) > 0) world.cloth[household] -= 1;
       gain(person, "mend");
       person.belonging = clamp(person.belonging + 6, 0, 100);
       person.energy = clamp(person.energy - 4, 0, 100);
@@ -360,6 +379,25 @@ function finish(world: World, person: Person, kind: ActionOption["kind"]): void 
     }
     case "watch":
       person.energy = clamp(person.energy - 6, 0, 100);
+      person.authority = clamp(person.authority + 1, 0, 100);
+      break;
+    case "build":
+      if ((world.wood[household] ?? 0) > 0 && (world.stone[household] ?? 0) > 0 && person.bricks < 6) {
+        world.wood[household] -= 1;
+        world.stone[household] -= 1;
+        person.bricks += 1;
+        person.authority = clamp(person.authority + 1, 0, 100);
+        if (person.bricks >= 6) {
+          world.expansions.push({
+            id: `${person.id}-house`,
+            ownerId: person.id,
+            kind: "house",
+            label: `${person.name}'s house`,
+            x: clamp(person.x + 3, 6, 94),
+            y: clamp(person.y + 2, 10, 90),
+          });
+        }
+      }
       break;
     case "go":
     case "stay":
@@ -391,6 +429,7 @@ const PROJECT_ACTS: Record<string, string[]> = {
   stall: ["mend", "haul"],
   shrine: ["teach", "learn"],
   watch: ["watch"],
+  house: ["build", "haul"],
 };
 
 function noteProject(world: World, person: Person, kind: ActionOption["kind"]): void {
@@ -440,8 +479,12 @@ export function say(world: World, speaker: Person, audience: Decision["audience"
     remember(world, other, line, audience === "private");
     const bump = audience === "private" ? 6 : audience === "town" ? 2 : 3;
     other.belonging = clamp(other.belonging + bump, 0, 100);
-    if (audience === "private") touchBond(world, speaker.id, other.id, 6);
-    else touchBond(world, speaker.id, other.id, audience === "town" ? 1 : 2);
+    if (audience === "private") {
+      touchBond(world, speaker.id, other.id, 6);
+      feel(world, speaker.id, other.id, "love", 5);
+      if (speaker.spouse && speaker.spouse !== other.id) feel(world, speaker.spouse, other.id, "jealousy", 7);
+    } else touchBond(world, speaker.id, other.id, audience === "town" ? 1 : 2);
+    if (text.includes("DISLIKE") || text.includes("😠")) feel(world, speaker.id, other.id, "hate", 4);
   }
   speaker.belonging = clamp(speaker.belonging + (audience === "private" ? 6 : 4), 0, 100);
   pushEvent(world, {
@@ -461,13 +504,124 @@ function remember(world: World, person: Person, text: string, isPrivate: boolean
   if (person.memory.length > 12) person.memory.shift();
 }
 
+function feel(world: World, a: string, b: string, key: "love" | "jealousy" | "hate" | "rivalry", delta: number): void {
+  let bond = world.bonds.find((item) => bondKey(item.a, item.b) === bondKey(a, b));
+  if (!bond) {
+    bond = { a, b, score: 30, note: "acquainted in town", love: 10, jealousy: 0, hate: 0, rivalry: 0 };
+    world.bonds.push(bond);
+  }
+  bond[key] = clamp(bond[key] + delta, 0, 100);
+}
+
 function touchBond(world: World, a: string, b: string, delta: number): void {
   let bond = world.bonds.find((item) => bondKey(item.a, item.b) === bondKey(a, b));
   if (!bond) {
-    bond = { a, b, score: 35, note: "acquainted in town" };
+    bond = { a, b, score: 35, note: "acquainted in town", love: 10, jealousy: 0, hate: 0, rivalry: 0 };
     world.bonds.push(bond);
   }
   bond.score = clamp(bond.score + delta, 0, 100);
+}
+
+function ageAndLife(world: World): void {
+  const birthday = world.day % 30 === 0;
+  for (const person of world.people) {
+    if (!person.alive) continue;
+    if (birthday) {
+      person.age += 1;
+      person.band = bandFor(person.age);
+    }
+    const starved = person.hunger >= 100 && person.energy < 8 && person.age > 60;
+    const old = person.age >= 92 || (person.age >= 78 && birthday && person.energy < 25);
+    if (starved || old) {
+      person.alive = false;
+      person.intent = null;
+      pushEvent(world, {
+        kind: "law",
+        speakerId: person.id,
+        audience: "town",
+        listenerId: null,
+        place: person.place,
+        text: `${person.name} has died, age ${person.age}.`,
+        heardBy: world.people.filter((item) => item.alive).map((item) => item.id),
+      });
+    }
+  }
+  tryBirth(world);
+}
+
+function tryBirth(world: World): void {
+  if (world.people.filter((person) => person.alive).length >= 24) return;
+  if (world.day % 12 !== 0) return;
+  const mother = world.people.find((person) => {
+    if (!person.alive || !person.spouse || person.gender !== "female" || person.band !== "adult") return false;
+    const father = world.people.find((other) => other.id === person.spouse);
+    if (!father?.alive || father.place !== person.place) return false;
+    const bond = world.bonds.find((item) => bondKey(item.a, item.b) === bondKey(person.id, father.id));
+    return (bond?.love ?? 0) >= 55 && (world.food[person.household] ?? 0) >= 5;
+  });
+  if (!mother || !mother.spouse) return;
+  const father = world.people.find((person) => person.id === mother.spouse);
+  if (!father) return;
+  const syllables = ["eth", "ine", "os", "elle", "ar", "ith", "ael"];
+  const stem = syllables[world.day % syllables.length] ?? "eth";
+  const id = `child${world.day}${world.people.length}`;
+  const girl = world.day % 2 === 0;
+  const child: Person = {
+    ...mother,
+    id,
+    name: `Jev${stem}`,
+    age: 0,
+    gender: girl ? "female" : "male",
+    band: "toddler",
+    spouse: null,
+    guardians: [mother.id, father.id],
+    dependents: [],
+    place: mother.place,
+    x: mother.x + 1,
+    y: mother.y + 1,
+    facing: "front",
+    hunger: 20,
+    energy: 70,
+    belonging: 70,
+    distress: false,
+    choresToday: 0,
+    projectProgress: 0,
+    authority: 0,
+    bricks: 0,
+    alive: true,
+    intent: null,
+    speech: null,
+    memory: [],
+    mood: "new",
+    innerNote: "just born",
+    because: "born",
+    skills: { farm: 0, cook: 0, mend: 0, forage: 0, haul: 0, heal: 0, teach: 0, play: 5 },
+  };
+  child.self = {
+    ...mother.self,
+    temper: "new and loud",
+    want: "a lap",
+    fear: "being alone",
+    habit: "cries",
+    pull: ["play"],
+    custom: "learn",
+    ambition: { ...mother.self.ambition, career: "none yet", plan: "stay alive", project: "garden", passion: "being held" },
+  };
+  mother.dependents.push(id);
+  father.dependents.push(id);
+  world.people.push(child);
+  world.bonds.push({ a: mother.id, b: id, score: 90, note: "mother and newborn", love: 90, jealousy: 0, hate: 0, rivalry: 0 });
+  world.bonds.push({ a: father.id, b: id, score: 80, note: "father and newborn", love: 80, jealousy: 0, hate: 0, rivalry: 0 });
+  world.food[mother.household] = Math.max(0, (world.food[mother.household] ?? 0) - 2);
+  pushEvent(world, {
+    kind: "law",
+    speakerId: id,
+    audience: "town",
+    listenerId: null,
+    place: mother.place,
+    text: `${child.name} is born to ${mother.name} and ${father.name}.`,
+    heardBy: world.people.filter((person) => person.alive).map((person) => person.id),
+  });
 }
 
 function pushEvent(world: World, event: Omit<CityEvent, "id" | "tick" | "clock">): void {
@@ -506,8 +660,13 @@ function walkOf(person: Person): PublicPerson["walk"] {
   };
 }
 
-function feelingOf(person: Person): PublicPerson["feeling"] {
+function feelingOf(world: World, person: Person): PublicPerson["feeling"] {
+  if (!person.alive) return "content";
   if (person.distress) return "afraid";
+  const mine = world.bonds.filter((bond) => bond.a === person.id || bond.b === person.id);
+  if (mine.some((bond) => bond.hate > 55)) return "bitter";
+  if (mine.some((bond) => bond.jealousy > 50)) return "jealous";
+  if (mine.some((bond) => bond.rivalry > 62)) return "rival";
   if (person.hunger > 62) return "hungry";
   if (person.energy < 32) return "tired";
   if (person.belonging < 34) return "lonely";
@@ -544,7 +703,10 @@ export function snapshot(world: World, thinking: ReadonlySet<string> = new Set()
     y: person.y,
     facing: person.facing,
     moving: person.intent?.kind === "go" && person.intent.path.length > 0,
-    feeling: feelingOf(person),
+    feeling: feelingOf(world, person),
+    authority: person.authority,
+    bricks: person.bricks,
+    alive: person.alive,
     hunger: person.hunger,
     energy: person.energy,
     belonging: person.belonging,
@@ -568,7 +730,11 @@ export function snapshot(world: World, thinking: ReadonlySet<string> = new Set()
     clock: clockLabel(world.hour, world.minute),
     phase: world.phase,
     weather: world.weather,
+    day: world.day,
     food: world.food,
+    wood: world.wood,
+    stone: world.stone,
+    cloth: world.cloth,
     people,
     bonds: world.bonds,
     log: world.log,
@@ -576,6 +742,17 @@ export function snapshot(world: World, thinking: ReadonlySet<string> = new Set()
     chronicleAt: world.chronicleAt,
     story: world.story,
     expansions: world.expansions,
+    visitors: world.visitors.map((visitor) => ({
+      id: visitor.id,
+      name: visitor.name,
+      place: visitor.place,
+      x: visitor.x,
+      y: visitor.y,
+      facing: visitor.facing,
+      speech: visitor.speech,
+      note: visitor.note,
+    })),
+    visitorLog: world.visitorLog.slice(-12),
     soul: world.soul,
     gemini: world.gemini,
   };

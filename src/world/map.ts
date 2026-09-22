@@ -1,14 +1,16 @@
 import type { Place, PlaceId } from "./types.js";
 
 export const PLACES: Place[] = [
-  { id: "grove", name: "Grove", x: 14, y: 38, shelter: false, neighbors: ["field"] },
-  { id: "field", name: "Field", x: 32, y: 52, shelter: false, neighbors: ["grove", "vale", "well"] },
-  { id: "well", name: "Well", x: 22, y: 74, shelter: false, neighbors: ["field", "square"] },
-  { id: "vale", name: "Vale cottage", x: 46, y: 24, shelter: true, neighbors: ["field", "square"] },
-  { id: "square", name: "Square", x: 52, y: 58, shelter: false, neighbors: ["vale", "well", "hearth", "market"] },
-  { id: "hearth", name: "Hearth", x: 70, y: 26, shelter: true, neighbors: ["square", "porch"] },
-  { id: "market", name: "Market loft", x: 76, y: 70, shelter: true, neighbors: ["square", "porch"] },
-  { id: "porch", name: "Elder porch", x: 88, y: 44, shelter: true, neighbors: ["hearth", "market"] },
+  { id: "grove", name: "Grove", x: 12, y: 42, shelter: false, neighbors: ["field", "mill"] },
+  { id: "mill", name: "Mill", x: 22, y: 22, shelter: true, neighbors: ["grove", "field", "vale"] },
+  { id: "field", name: "Field", x: 34, y: 48, shelter: false, neighbors: ["grove", "mill", "vale", "well"] },
+  { id: "well", name: "Well", x: 24, y: 70, shelter: false, neighbors: ["field", "square", "rise"] },
+  { id: "vale", name: "Vale cottage", x: 44, y: 28, shelter: true, neighbors: ["field", "mill", "square"] },
+  { id: "square", name: "Square", x: 52, y: 56, shelter: false, neighbors: ["vale", "well", "hearth", "market", "rise"] },
+  { id: "hearth", name: "Hearth", x: 68, y: 24, shelter: true, neighbors: ["square", "porch"] },
+  { id: "market", name: "Market loft", x: 74, y: 62, shelter: true, neighbors: ["square", "porch", "rise"] },
+  { id: "rise", name: "Rise", x: 62, y: 78, shelter: false, neighbors: ["square", "well", "market"] },
+  { id: "porch", name: "Elder porch", x: 88, y: 40, shelter: true, neighbors: ["hearth", "market"] },
 ];
 
 const BY_ID = new Map(PLACES.map((place) => [place.id, place]));

@@ -1,18 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { householdName } from "../world/cast.js";
+import { VISITORS_OPEN } from "../world/gates.js";
 import { INTENTS, TOPICS, TONES } from "../world/lexicon.js";
 import { placeOf } from "../world/map.js";
 import { lawLines } from "../world/rules.js";
 import type { PlaceId, PublicPerson, PublicState } from "../world/types.js";
+import { Badge } from "./components/ui/badge.js";
+import { Button } from "./components/ui/button.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
+import { Progress } from "./components/ui/progress.js";
+import { ScrollArea } from "./components/ui/scroll-area.js";
+import { Separator } from "./components/ui/separator.js";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./components/ui/sheet.js";
 import { FEEL, LOOKS, PROPS, ROUTES, SPOTS, bodyScale } from "./village.js";
+import { VisitDock, VisitorSprite, readSession, type VisitSession } from "./visit.js";
 
 export function App() {
   const [state, setState] = useState<PublicState | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [paused, setPaused] = useState(false);
-  const [heardOpen, setHeardOpen] = useState(false);
-  const [lexiconOpen, setLexiconOpen] = useState(false);
+  const [storyOpen, setStoryOpen] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [session, setSession] = useState<VisitSession | null>(() => readSession());
+  const [addressIds, setAddressIds] = useState<string[]>([]);
   const stageRef = useRef<HTMLElement>(null);
   const seen = useRef({ tick: -1, at: 0 });
   const fromPos = useRef<Record<string, { x: number; y: number }>>({});
@@ -42,63 +51,30 @@ export function App() {
   if (state && state.tick !== seen.current.tick) {
     const next: Record<string, { x: number; y: number }> = {};
     for (const person of state.people) next[person.id] = { x: person.x, y: person.y };
+    for (const visitor of state.visitors ?? []) next[visitor.id] = { x: visitor.x, y: visitor.y };
     fromPos.current = Object.keys(toPos.current).length === 0 ? next : toPos.current;
     toPos.current = next;
     seen.current = { tick: state.tick, at: now || performance.now() };
   }
   const glide = Math.min(1, Math.max(0, (now - seen.current.at) / 1000));
+  const laid = layoutActors(state, fromPos.current, glide);
 
   const selected = state?.people.find((person) => person.id === selectedId) ?? null;
-  const openLines = useMemo(
-    () => (state?.log ?? []).filter((event) => event.kind === "speech" && event.audience !== "private").slice(-8).reverse(),
-    [state],
-  );
-
-  async function post(path: string, body: unknown) {
-    await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  }
-
   const phase = state?.phase ?? "day";
   const weather = state?.weather ?? "clear";
 
   return (
-    <div className={`game ${phase} ${weather}`}>
-      <header className="nav">
-        <strong className="mark">JEV City</strong>
+    <div className={`game flex h-full flex-col bg-background ${phase} ${weather}`}>
+      <header className="z-20 flex h-12 shrink-0 items-center gap-4 border-b bg-background/95 px-4">
+        <strong className="font-serif text-base font-medium tracking-tight">JEV City</strong>
         <SkyClock hour={state?.hour ?? 7} minute={state?.minute ?? 0} phase={phase} clock={state?.clock ?? "--:--"} />
-        <div className="nav-actions">
-          {offline ? <span className="tag warn">Reconnecting</span> : null}
-          <span className="tag">{state?.soul.mode === "jev" ? "JEV" : "Reflex"}{state?.soul.inFlight ? " ·" : ""}</span>
-          <button type="button" onClick={() => void post("/api/soul", { mode: state?.soul.mode === "jev" ? "reflex" : "jev" })}>
-            {state?.soul.mode === "jev" ? "Reflex" : "JEV"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !paused;
-              setPaused(next);
-              void post("/api/pause", { paused: next });
-            }}
-          >
-            {paused ? "Resume" : "Pause"}
-          </button>
-          <button type="button" aria-expanded={heardOpen} onClick={() => { setHeardOpen((open) => !open); setSelectedId(null); }}>
-            Heard
-          </button>
-        </div>
+        {offline ? <Badge variant="destructive" className="ml-auto">Reconnecting</Badge> : null}
       </header>
 
       <main
         className="stage"
         ref={stageRef}
-        onClick={() => {
-          setSelectedId(null);
-          setHeardOpen(false);
-        }}
+        onClick={() => setSelectedId(null)}
       >
         <div className="scene">
           <svg className="paths" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -127,74 +103,83 @@ export function App() {
               {item.kind}
             </span>
           ))}
-          {state?.people.map((person) => (
+          {state?.people.filter((person) => person.alive !== false).map((person) => (
             <PersonSprite
               key={person.id}
               person={person}
               people={state.people}
-              from={fromPos.current[person.ledBy ?? person.id]}
-              glide={glide}
+              at={laid[person.id]}
               now={now}
               selected={person.id === selectedId}
-              revealPrivate={person.id === selectedId || person.speech?.listenerId === selectedId}
               onSelect={(id) => {
                 setSelectedId(id);
-                setHeardOpen(false);
+                setAddressIds([id]);
               }}
+            />
+          ))}
+          {(state?.visitors ?? []).map((visitor) => (
+            <VisitorSprite
+              key={visitor.id}
+              visitor={visitor}
+              at={laid[visitor.id]}
+              moving={Math.hypot(visitor.x - (fromPos.current[visitor.id]?.x ?? visitor.x), visitor.y - (fromPos.current[visitor.id]?.y ?? visitor.y)) > 0.4}
+              onPick={() => undefined}
             />
           ))}
         </div>
 
         {state?.story ? (
-          <section className="story" aria-live="polite">
-            <p>In the town{paused ? " · paused" : ""}{state.story.at ? ` · ${state.story.at}` : ""}</p>
-            <h2>{state.story.headline}</h2>
-            <p>{state.story.body}</p>
-            {state.story.gossip.length > 0 ? (
-              <ul>
-                {state.story.gossip.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
+          <Card
+            className={`absolute z-20 max-h-[40vh] overflow-auto border-primary/30 bg-card/95 shadow-lg ${storyOpen ? "bottom-3 left-3 w-[min(26rem,calc(100%-1.5rem))] max-md:top-2 max-md:bottom-auto" : "bottom-3 left-3 w-auto border-0 bg-transparent shadow-none"}`}
+            aria-live="polite"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <CardHeader className="p-3 pb-0">
+              <Button variant="ghost" size="sm" className="w-fit" onClick={() => setStoryOpen((open) => !open)}>
+                {storyOpen ? "Hide" : "Story"}
+              </Button>
+            </CardHeader>
+            {storyOpen ? (
+              <CardContent className="px-4 pt-2 pb-4">
+                {state.story.day && state.story.headline ? (
+                  <>
+                    <CardDescription>
+                      {state.story.at === "end of day" ? `End of day ${state.story.day}` : `Day ${state.story.day}, so far`}
+                    </CardDescription>
+                    <CardTitle className="mt-1">{state.story.headline}</CardTitle>
+                    <p className="mt-2 text-sm leading-relaxed">{state.story.body}</p>
+                    {state.story.gossip.length > 0 ? (
+                      <ul className="mt-3 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+                        {state.story.gossip.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </>
+                ) : (
+                  <CardDescription>Day {state.day} is still open. The record is written at midnight, about the day that just ended.</CardDescription>
+                )}
+              </CardContent>
             ) : null}
-          </section>
+          </Card>
         ) : null}
 
-        {heardOpen ? (
-          <section className="popover heard" onClick={(event) => event.stopPropagation()}>
-            <header>
-              <h2>Heard in the open</h2>
-              <button type="button" onClick={() => setHeardOpen(false)}>Close</button>
-            </header>
-            {openLines.length === 0 ? <p>The square is quiet.</p> : null}
-            {openLines.map((event) => (
-              <p key={event.id}><span>{event.clock}</span> {event.text}</p>
-            ))}
-            {state?.chronicle ? <p className="chronicle">{state.chronicle}</p> : null}
-            <button type="button" onClick={() => setLexiconOpen((open) => !open)}>
-              {lexiconOpen ? "Hide lexicon" : "Lexicon"}
-            </button>
-            {lexiconOpen ? (
-              <div className="lexicon">
-                <p>{INTENTS.map((item) => item.id).join(" · ")}</p>
-                <p>{TOPICS.map((item) => item.id).join(" · ")}</p>
-                <p>{TONES.map((item) => `${item.emoji} ${item.id}`).join("  ")}</p>
-              </div>
-            ) : null}
-          </section>
+        {VISITORS_OPEN ? (
+          <VisitDock
+            state={state}
+            session={session}
+            setSession={setSession}
+            addressIds={addressIds}
+            setAddressIds={setAddressIds}
+          />
         ) : null}
       </main>
 
-      <aside className={selected ? "drawer open" : "drawer"} onClick={(event) => event.stopPropagation()}>
-        {selected && state ? (
-          <Dossier
-            person={selected}
-            state={state}
-            onClose={() => setSelectedId(null)}
-            onCompact={() => void post("/api/compact", {})}
-          />
-        ) : null}
-      </aside>
+      <Sheet open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelectedId(null); }}>
+        <SheetContent onClick={(event) => event.stopPropagation()}>
+          {selected && state ? <Dossier person={selected} state={state} /> : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -205,6 +190,49 @@ function pointOf(person: PublicPerson): { x: number; y: number } {
     x: Number.isFinite(person.x) ? person.x : spot.x,
     y: Number.isFinite(person.y) ? person.y : spot.y,
   };
+}
+
+function layoutActors(
+  state: PublicState | null,
+  from: Record<string, { x: number; y: number }>,
+  glide: number,
+): Record<string, { x: number; y: number }> {
+  if (!state) return {};
+  const spots = [
+    ...state.people.filter((person) => person.alive !== false).map((person) => ({
+      id: person.id,
+      ...drawAt(person, state.people, from[person.ledBy ?? person.id], glide),
+    })),
+    ...(state.visitors ?? []).map((visitor) => {
+      const here = {
+        x: Number.isFinite(visitor.x) ? visitor.x : 52,
+        y: Number.isFinite(visitor.y) ? visitor.y : 56,
+      };
+      const origin = from[visitor.id] && Number.isFinite(from[visitor.id]?.x) ? from[visitor.id] : here;
+      return {
+        id: visitor.id,
+        x: (origin?.x ?? here.x) + (here.x - (origin?.x ?? here.x)) * glide,
+        y: (origin?.y ?? here.y) + (here.y - (origin?.y ?? here.y)) * glide,
+      };
+    }),
+  ].sort((left, right) => left.id.localeCompare(right.id));
+  const placed: { x: number; y: number }[] = [];
+  const laid: Record<string, { x: number; y: number }> = {};
+  for (const spot of spots) {
+    let x = spot.x;
+    let y = spot.y;
+    let tries = 0;
+    while (placed.some((other) => Math.hypot(other.x - x, other.y - y) < 5.4) && tries < 10) {
+      const turn = (tries + 1) * 0.95;
+      const ring = 5.4 + tries * 0.25;
+      x = Math.max(4, Math.min(96, spot.x + Math.cos(turn) * ring));
+      y = Math.max(8, Math.min(92, spot.y + Math.sin(turn) * ring * 0.7));
+      tries += 1;
+    }
+    placed.push({ x, y });
+    laid[spot.id] = { x, y };
+  }
+  return laid;
 }
 
 function drawAt(person: PublicPerson, people: PublicPerson[], from: { x: number; y: number } | undefined, glide: number): { x: number; y: number } {
@@ -220,44 +248,54 @@ function drawAt(person: PublicPerson, people: PublicPerson[], from: { x: number;
 function PersonSprite({
   person,
   people,
-  from,
-  glide,
+  at,
   now,
   selected,
-  revealPrivate,
   onSelect,
 }: {
   person: PublicPerson;
   people: PublicPerson[];
-  from: { x: number; y: number } | undefined;
-  glide: number;
+  at: { x: number; y: number } | undefined;
   now: number;
   selected: boolean;
-  revealPrivate: boolean;
   onSelect: (id: string) => void;
 }) {
-  const spot = drawAt(person, people, from, glide);
+  const spot = at ?? pointOf(person);
   const look = LOOKS[person.id] ?? { pack: "goblin" as const, who: "male" as const, hue: 0 };
   const facing = person.facing || "front";
   const dir = facing.charAt(0).toUpperCase() + facing.slice(1);
   const scale = bodyScale(person.band);
   const listener = person.speech?.listenerId ? people.find((other) => other.id === person.speech?.listenerId) : null;
-  const privateLine = person.speech?.audience === "private";
-  const showWords = !privateLine || revealPrivate;
+  const line = person.speech ? readLine(person.speech.text) : null;
+  const address = person.speech
+    ? person.speech.audience === "private"
+      ? `to ${listener?.name ?? "someone"}`
+      : person.speech.audience === "town"
+        ? "to the town"
+        : "to those here"
+    : "";
   const frame = Math.floor(now / 110) % 8;
+  const feeling = FEEL[person.feeling] ?? person.feeling;
 
   return (
     <button
       type="button"
-      className={`actor ${selected ? "selected" : ""} ${person.moving ? "moving" : ""}`}
+      className={`actor ${selected ? "selected" : ""} ${person.moving ? "moving" : ""} ${person.speech ? "speaking" : ""}`}
       style={{ left: `${spot.x}%`, top: `${spot.y}%`, width: `${4.1 * scale}%` }}
       data-person={person.id}
       aria-pressed={selected}
+      aria-label={person.speech ? `${person.name}, ${address}, ${line?.what ?? ""}` : person.name}
       onClick={(event) => {
         event.stopPropagation();
         onSelect(person.id);
       }}
     >
+      {person.speech && line ? (
+        <span className="subtitle">
+          <span className="how">{[address, line.how].filter(Boolean).join(" · ")}</span>
+          <span className="what">{line.what}</span>
+        </span>
+      ) : null}
       {look.pack === "valkyrie" ? (
         <img
           className={facing === "left" ? "flip" : ""}
@@ -274,22 +312,28 @@ function PersonSprite({
           }}
         />
       )}
-      <b>{person.name}</b>
-      <small>
-        {person.doing || "here"}
-        {person.feeling && person.feeling !== "content" ? ` · ${FEEL[person.feeling] ?? person.feeling}` : ""}
-      </small>
-      {person.speech ? (
-        <em>
-          {showWords
-            ? `${privateLine && listener ? `to ${listener.name}: ` : ""}${person.speech.text}`
-            : privateLine && listener
-              ? `quietly, to ${listener.name}`
-              : person.speech.text}
-        </em>
-      ) : null}
+      <b>
+        {person.feeling !== "content" ? <span className={`dot ${person.feeling}`} /> : null}
+        {person.name}
+      </b>
+      <span className="caption">
+        <strong>{person.name}</strong>
+        <span>{person.doing || "here"}</span>
+        <span className="how">{feeling}</span>
+      </span>
     </button>
   );
+}
+
+function readLine(text: string): { what: string; how: string } {
+  const parts = text.trim().split(/\s+/);
+  const tone = TONES.find((item) => parts.includes(item.emoji));
+  const words = parts.filter((part) => part !== tone?.emoji);
+  const intent = INTENTS.find((item) => item.id === words[0]?.toLowerCase());
+  const topic = TOPICS.find((item) => item.id === words[1]?.toLowerCase());
+  if (!intent) return { what: text, how: tone ? `${tone.label} ${tone.emoji}` : "" };
+  const what = topic ? `${intent.label} ${topic.label}` : intent.label;
+  return { what, how: tone ? `${tone.label} ${tone.emoji}` : "" };
 }
 
 function sheetUrl(look: Extract<typeof LOOKS[string], { pack: "goblin" | "boss" }>, dir: string, moving: boolean): string {
@@ -319,13 +363,9 @@ function SkyClock({ hour, minute, phase, clock }: { hour: number; minute: number
 function Dossier({
   person,
   state,
-  onClose,
-  onCompact,
 }: {
   person: PublicPerson;
   state: PublicState;
-  onClose: () => void;
-  onCompact: () => void;
 }) {
   const bonds = state.bonds
     .filter((bond) => bond.a === person.id || bond.b === person.id)
@@ -337,64 +377,72 @@ function Dossier({
 
   return (
     <>
-      <header>
-        <div>
-          <p>{householdName(person.household)}</p>
-          <h2>{person.name}</h2>
+      <SheetHeader>
+        <p className="text-xs tracking-widest text-primary uppercase">{householdName(person.household)}</p>
+        <SheetTitle>{person.name}</SheetTitle>
+        <SheetDescription>
+          {person.age} · {person.gender} · {person.band} · {placeOf(person.place).name}
+        </SheetDescription>
+      </SheetHeader>
+      <ScrollArea className="min-h-0 flex-1 pr-3">
+        <div className="space-y-4 pb-6">
+          <p className="text-sm">{person.doing}{person.because ? ` — ${person.because}` : ""}</p>
+          <p className="font-serif text-lg leading-snug">{person.mood}</p>
+          {person.self.ambition ? (
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <p className="text-foreground">{person.self.ambition.passion}</p>
+              <p>Plan: {person.self.ambition.plan}</p>
+              <p>Likes {person.self.ambition.likes}. Dislikes {person.self.ambition.dislikes}.</p>
+            </div>
+          ) : null}
+          <p className="text-sm">{person.innerNote}</p>
+          <Separator />
+          <dl className="grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-1 text-sm">
+            <dt className="text-muted-foreground">Temper</dt><dd>{person.self.temper}</dd>
+            <dt className="text-muted-foreground">Wants</dt><dd>{person.self.want}</dd>
+            <dt className="text-muted-foreground">Fears</dt><dd>{person.self.fear}</dd>
+            <dt className="text-muted-foreground">Habit</dt><dd>{person.self.habit}</dd>
+          </dl>
+          <Meter label="Hunger" value={person.hunger} />
+          <Meter label="Energy" value={person.energy} />
+          <Meter label="Belonging" value={person.belonging} />
+          <p className="text-xs text-muted-foreground">
+            Food {state.food[person.household] ?? 0} · wood {state.wood?.[person.household] ?? 0} · stone {state.stone?.[person.household] ?? 0} · cloth {state.cloth?.[person.household] ?? 0}
+          </p>
+          <p className="text-xs text-muted-foreground">Authority {person.authority ?? 0} · bricks {person.bricks ?? 0}/6</p>
+          <Separator />
+          <h3 className="text-sm font-medium">Said aside</h3>
+          {privateLines.length === 0 ? <p className="text-sm text-muted-foreground">No private lines yet.</p> : null}
+          {privateLines.map((event) => (
+            <p key={event.id} className="text-sm"><span className="mr-2 text-muted-foreground tabular-nums">{event.clock}</span>{event.text}</p>
+          ))}
+          <h3 className="text-sm font-medium">Bonds</h3>
+          <ul className="space-y-1 text-sm">
+            {bonds.map((bond) => {
+              const otherId = bond.a === person.id ? bond.b : bond.a;
+              const other = state.people.find((item) => item.id === otherId);
+              return <li key={`${bond.a}-${bond.b}`}><span className="font-medium">{other?.name ?? otherId}</span> {bond.score} — {bond.note}</li>;
+            })}
+          </ul>
+          <details>
+            <summary className="cursor-pointer text-sm">Law</summary>
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+              {lawLines(person).map((line) => <li key={line}>{line}</li>)}
+            </ul>
+          </details>
+          {state.gemini.lastError ? <p className="text-xs text-destructive">{state.gemini.lastError}</p> : null}
+          {state.soul.lastError ? <p className="text-xs text-destructive">{state.soul.lastError}</p> : null}
         </div>
-        <button type="button" onClick={onClose}>Close</button>
-      </header>
-      <p className="meta">{person.age} · {person.gender} · {person.band} · {placeOf(person.place).name}</p>
-      <p className="doing">{person.doing}{person.because ? ` — ${person.because}` : ""}</p>
-      <p className="mood">{person.mood}</p>
-      {person.self.ambition ? (
-        <>
-          <p>{person.self.ambition.passion}</p>
-          <p className="quiet">Plan: {person.self.ambition.plan}</p>
-          <p className="quiet">Likes {person.self.ambition.likes}. Dislikes {person.self.ambition.dislikes}.</p>
-        </>
-      ) : null}
-      <p>{person.innerNote}</p>
-      <dl>
-        <div><dt>Temper</dt><dd>{person.self.temper}</dd></div>
-        <div><dt>Wants</dt><dd>{person.self.want}</dd></div>
-        <div><dt>Fears</dt><dd>{person.self.fear}</dd></div>
-        <div><dt>Habit</dt><dd>{person.self.habit}</dd></div>
-      </dl>
-      <Meter label="Hunger" value={person.hunger} />
-      <Meter label="Energy" value={person.energy} />
-      <Meter label="Belonging" value={person.belonging} />
-      <p className="store">Larder {state.food[person.household] ?? 0}</p>
-      <h3>Said in private</h3>
-      {privateLines.length === 0 ? <p className="quiet">Nothing sealed yet.</p> : null}
-      {privateLines.map((event) => <p key={event.id}><span>{event.clock}</span> {event.text}</p>)}
-      <h3>Bonds</h3>
-      <ul>
-        {bonds.map((bond) => {
-          const otherId = bond.a === person.id ? bond.b : bond.a;
-          const other = state.people.find((item) => item.id === otherId);
-          return <li key={`${bond.a}-${bond.b}`}><b>{other?.name ?? otherId}</b> {bond.score} — {bond.note}</li>;
-        })}
-      </ul>
-      <details>
-        <summary>Law</summary>
-        <ul>
-          {lawLines(person).map((line) => <li key={line}>{line}</li>)}
-        </ul>
-      </details>
-      <button type="button" onClick={onCompact}>Compact memory</button>
-      <p className="quiet">Town, farm, and people tiles by Kenney.</p>
-      {state.gemini.lastError ? <p className="quiet">{state.gemini.lastError}</p> : null}
-      {state.soul.lastError ? <p className="quiet">{state.soul.lastError}</p> : null}
+      </ScrollArea>
     </>
   );
 }
 
 function Meter({ label, value }: { label: string; value: number }) {
   return (
-    <label className="meter">
+    <label className="grid grid-cols-[5.5rem_1fr] items-center gap-3 text-xs text-muted-foreground">
       <span>{label}</span>
-      <i><b style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></i>
+      <Progress value={value} />
     </label>
   );
 }

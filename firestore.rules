@@ -1,0 +1,19 @@
+rules_version = '2';
+// The town server signs in with the web API key, so these four
+// collections allow unauthenticated reads and writes. Every other path stays closed.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /town/{doc} {
+      allow read, write: if true;
+    }
+    match /visitors/{doc} {
+      allow read, write: if true;
+    }
+    match /visitorLog/{doc} {
+      allow read, write: if true;
+    }
+    match /ipSeats/{doc} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -11,9 +11,9 @@ function person(world: ReturnType<typeof createWorld>, id: string) {
   return found;
 }
 
-test("the town has ten named residents", () => {
+test("the town has eighteen named residents", () => {
   const world = createWorld();
-  assert.equal(world.people.length, 10);
+  assert.equal(world.people.length, 18);
   assert.ok(world.people.some((item) => item.name === "Jevaary"));
   assert.ok(world.people.some((item) => item.name === "Jevine"));
   assert.equal(person(world, "jevik").band, "toddler");
@@ -79,7 +79,7 @@ test("an announcement is heard by the whole town", () => {
   const jevoric = person(world, "jevoric");
   jevoric.place = "square";
   say(world, jevoric, "town", null, "TELL rain 🌧️");
-  assert.equal(world.log.at(-1)?.heardBy.length, 9);
+  assert.equal(world.log.at(-1)?.heardBy.length, world.people.length - 1);
 });
 
 test("night brings the toddler home", () => {

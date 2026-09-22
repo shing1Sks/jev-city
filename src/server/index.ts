@@ -2,10 +2,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { decideWithJev } from "./jev.js";
 import { compactWithGemini, loadInner, writeChronicle } from "./chronicle.js";
 import { loadEnv } from "./env.js";
+import { configureFirestore, firestoreReady, loadTown, saveTown } from "./store.js";
+import { VISITORS_OPEN } from "../world/gates.js";
+import { enterTown, leaveTown, stepVisitors, visitorGo, visitorSay } from "./visitors.js";
 import { applyDecision, createWorld, snapshot, tick } from "../world/sim.js";
 import { reflexDecide } from "../world/reflex.js";
 
 loadEnv();
+configureFirestore();
 
 const world = createWorld();
 loadInner(world);
@@ -27,8 +31,8 @@ let paused = false;
 let compacting = false;
 let lastCompact = 0;
 const storyCalls: number[] = [];
-const STORY_GAP_MS = 60_000;
-const STORY_HOURLY_CAP = 60;
+const STORY_GAP_MS = 45_000;
+const STORY_HOURLY_CAP = 100;
 
 const server = createServer(async (request, response) => {
   setCors(response);
@@ -45,6 +49,7 @@ const server = createServer(async (request, response) => {
       gemini: world.gemini.configured,
       model: world.soul.lastModel,
       geminiModel: world.gemini.model,
+      store: firestoreReady(),
     });
     return;
   }
@@ -76,6 +81,38 @@ const server = createServer(async (request, response) => {
     send(response, 200, { mode: world.soul.mode, configured: world.soul.configured });
     return;
   }
+  if (request.method === "POST" && url === "/api/visit/enter") {
+    if (!VISITORS_OPEN) {
+      send(response, 403, { error: "The town is not taking visitors right now." });
+      return;
+    }
+    const body = await readJson<{ name?: string }>(request);
+    const result = await enterTown(world, request, body.name ?? "");
+    send(response, "error" in result ? 400 : 200, result);
+    broadcast();
+    return;
+  }
+  if (request.method === "POST" && url === "/api/visit/leave") {
+    const body = await readJson<{ id?: string }>(request);
+    if (body.id) await leaveTown(world, body.id);
+    send(response, 200, { ok: true });
+    broadcast();
+    return;
+  }
+  if (request.method === "POST" && url === "/api/visit/go") {
+    const body = await readJson<{ id?: string; place?: string }>(request);
+    const result = await visitorGo(world, body.id ?? "", body.place ?? "");
+    send(response, result.error ? 400 : 200, result);
+    broadcast();
+    return;
+  }
+  if (request.method === "POST" && url === "/api/visit/say") {
+    const body = await readJson<{ id?: string; text?: string; suggest?: boolean }>(request);
+    const result = await visitorSay(world, body.id ?? "", body.text ?? "", Boolean(body.suggest));
+    send(response, result.error ? 400 : 200, result);
+    broadcast();
+    return;
+  }
   if (request.method === "POST" && url === "/api/compact") {
     await runCompact();
     send(response, 200, { status: world.gemini.status, error: world.gemini.lastError });
@@ -87,7 +124,10 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`JEV City listening at http://${HOST}:${PORT}`);
-  writeChronicle(world);
+  void loadTown(world).then(() => {
+    writeChronicle(world);
+    broadcast();
+  });
 });
 
 setInterval(() => {
@@ -102,9 +142,14 @@ setInterval(() => {
     thinking.add(id);
     queue.push(id);
   }
+  stepVisitors(world);
   void pump();
-  if (world.tick % 5 === 0) writeChronicle(world);
-  if (world.uncompiled >= 4 && storyBlock() === null) void runCompact();
+  if (world.tick % 30 === 0) void saveTown(world);
+  if (world.tick % 15 === 0) writeChronicle(world);
+  if (world.needsSummary && storyBlock() === null) {
+    world.needsSummary = false;
+    void runCompact();
+  }
   broadcast();
 }, 1000);
 
@@ -136,7 +181,7 @@ async function pump(): Promise<void> {
 function storyBlock(): string | null {
   const cutoff = Date.now() - 3_600_000;
   while (storyCalls.length > 0 && (storyCalls[0] ?? 0) < cutoff) storyCalls.shift();
-  if (storyCalls.length >= STORY_HOURLY_CAP) return "The town story is capped at 60 updates an hour.";
+  if (storyCalls.length >= STORY_HOURLY_CAP) return "The town story is capped at 100 updates an hour.";
   if (storyCalls.length > 0 && Date.now() - lastCompact < STORY_GAP_MS) return "The next story update is about a minute away.";
   return null;
 }

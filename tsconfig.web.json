@@ -8,7 +8,11 @@
     "noEmit": true,
     "skipLibCheck": true,
     "lib": ["ES2022", "DOM"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/web/*"]
+    }
   },
   "include": ["src/web/**/*.ts", "src/web/**/*.tsx", "src/world/**/*.ts"]
 }

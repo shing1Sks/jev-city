@@ -7,14 +7,20 @@ export const SPOTS: Record<PlaceId, { x: number; y: number }> = Object.fromEntri
 
 export const ROUTES: [PlaceId, PlaceId][] = [
   ["grove", "field"],
+  ["grove", "mill"],
+  ["mill", "field"],
+  ["mill", "vale"],
   ["field", "vale"],
   ["field", "well"],
   ["well", "square"],
+  ["well", "rise"],
   ["vale", "square"],
   ["square", "hearth"],
   ["square", "market"],
+  ["square", "rise"],
   ["hearth", "porch"],
   ["market", "porch"],
+  ["market", "rise"],
 ];
 
 export interface Prop {
@@ -47,7 +53,8 @@ export const PROPS: Prop[] = [
   { src: "/craft/summer/Prop%20-%20House.png", x: 74, y: 56, w: 7.5 },
   { src: "/craft/summer/Prop%20-%20Campfire.png", x: 66, y: 22, w: 3.4 },
   { src: "/craft/summer/Prop%20-%20Well.png", x: 20, y: 68, w: 3.6 },
-  { src: "/craft/summer/Prop%20-%20Windmill.png", x: 60, y: 12, w: 6.5 },
+  { src: "/craft/summer/Prop%20-%20Windmill.png", x: 20, y: 16, w: 6 },
+  { src: "/craft/summer/Prop%20-%20House.png", x: 60, y: 74, w: 6 },
   { src: "/craft/summer/Prop%20-%20Castle%20Square.png", x: 88, y: 28, w: 7 },
   { src: "/craft/summer/Prop%20-%20Watchtower%20Short.png", x: 30, y: 18, w: 4 },
   { src: "/craft/summer/Prop%20-%20Wooden%20Cart.png", x: 68, y: 64, w: 4.5 },
@@ -96,4 +103,7 @@ export const FEEL: Record<string, string> = {
   afraid: "afraid",
   playing: "playing",
   content: "settled",
+  jealous: "jealous",
+  bitter: "bitter",
+  rival: "competing",
 };

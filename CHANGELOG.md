@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Eighteen residents, a one-minute day, and an end-of-day story from GPT-6 Luna.
+- Nameplates and speech subtitles on the map. The watch face uses shadcn/ui.
+- Visitor entry is closed. Firestore is wired for the town, visitors, and the visitor log.
+- Watcher controls for reflex, pause, and the heard list are gone.
+
 ## 0.2.0
 
 - Public story card, written by GPT-6 Luna at most 60 times an hour.
