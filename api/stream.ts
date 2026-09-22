@@ -39,7 +39,8 @@ function beginStream(request: IncomingMessage, response: ServerResponse, run: (s
     "X-Accel-Buffering": "no",
   });
   const abort = new AbortController();
-  request.on("close", () => abort.abort());
+  request.on("aborted", () => abort.abort());
+  request.on("error", () => abort.abort());
   void run(abort.signal)
     .catch(() => undefined)
     .finally(() => {
