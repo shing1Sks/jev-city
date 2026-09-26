@@ -294,3 +294,134 @@
 @media (prefers-reduced-motion: reduce) {
   .rain, .actor.walking img { animation: none; }
 }
+
+/* ------------------------------------------------ resource nodes */
+
+.node {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -78%);
+  height: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.22));
+}
+
+.crop {
+  position: absolute;
+  z-index: 2;
+  width: 2.2%;
+  aspect-ratio: 1.6;
+  transform: translate(-50%, -40%);
+  border-radius: 42% 42% 30% 30%;
+  background: #8a6a44;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+.crop::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 60%;
+  transform: translateX(-50%);
+  width: 38%;
+  height: 0;
+  border-radius: 40% 40% 0 0;
+  background: #6fae4e;
+}
+
+.crop.s1::after { height: 26%; }
+.crop.s2::after { height: 46%; background: #7fbb56; }
+.crop.s3::after { height: 64%; background: #d8b84a; }
+
+/* ------------------------------------------------ build sites */
+
+.site {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  width: 9%;
+  pointer-events: none;
+}
+
+.site .scaffold {
+  width: 34%;
+  aspect-ratio: 1;
+  border: 2px dashed rgba(240, 195, 106, 0.85);
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(45deg, rgba(122, 86, 52, 0.6) 0 6px, rgba(94, 66, 40, 0.6) 6px 12px);
+}
+
+.site b {
+  padding: 0.05rem 0.34rem;
+  border-radius: 999px;
+  background: rgba(12, 16, 12, 0.9);
+  color: #f0c36a;
+  font-size: 0.6rem;
+  font-weight: 560;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.site .bar {
+  width: 70%;
+  height: 4px;
+  background: rgba(12, 16, 12, 0.8);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.site .bar span { display: block; height: 100%; background: #f0c36a; }
+
+.site .mat {
+  font-size: 0.56rem;
+  color: rgba(247, 243, 232, 0.92);
+  background: rgba(12, 16, 12, 0.85);
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------ town log */
+
+.logline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.logline .k {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex: none;
+  background: #77876f;
+  align-self: center;
+}
+
+.logline.life .k { background: #e07a6a; }
+.logline.build .k { background: #f0c36a; }
+.logline.law .k { background: #9bb0c8; }
+.logline.weather .k { background: #7ec8e0; }
+.logline.meal .k { background: #8fce6a; }
+.logline.speech .k { background: #c4a6d6; }
+.logline time { color: var(--muted-foreground); font-variant-numeric: tabular-nums; flex: none; }
+.logline span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.logscroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 40%, transparent) transparent;
+  overscroll-behavior: contain;
+}
+
+.scene .rain.storm { opacity: 0.55; animation-duration: 0.4s; }

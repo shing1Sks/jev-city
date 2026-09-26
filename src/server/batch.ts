@@ -1,13 +1,16 @@
-import { compactWithGemini } from "./chronicle.js";
+import { compactStory } from "./chronicle.js";
 import { decideWithJev } from "./jev.js";
 import { saveTown } from "./store.js";
 import { stepVisitors } from "./visitors.js";
 import { applyDecision, snapshot, tick } from "../world/sim.js";
 import { reflexDecide } from "../world/reflex.js";
+import { MINDS_LIVE } from "../world/gates.js";
 import type { PublicState, World } from "../world/types.js";
 
 export const TICKS_PER_BATCH = 120;
-const SOUL_GAP_MS = 8_000;
+// Spine cadence: 6 agents per batched call, one batch every 6 s (PLAN F6).
+const SOUL_GAP_MS = 6_000;
+const SOUL_BATCH = 6;
 
 type Emit = (state: PublicState) => void;
 
@@ -37,9 +40,9 @@ export async function runTownBatch(world: World, emit: Emit, signal: AbortSignal
     if (world.soul.mode === "jev" && Date.now() < nextSoulAt) return;
     pumping = true;
     world.soul.inFlight = true;
-    const batch = queue.splice(0, 4);
+    const batch = queue.splice(0, SOUL_BATCH);
     try {
-      if (world.soul.mode === "jev" && world.soul.configured) {
+      if (MINDS_LIVE && world.soul.mode === "jev" && world.soul.configured) {
         await decideWithJev(world, batch);
       } else {
         for (const id of batch) applyDecision(world, reflexDecide(world, id));
@@ -69,11 +72,11 @@ export async function runTownBatch(world: World, emit: Emit, signal: AbortSignal
     void pump();
 
     if (world.tick % 30 === 0) await saveTown(world);
-    if (world.needsSummary && !compacting) {
+    if (MINDS_LIVE && world.needsSummary && !compacting) {
       world.needsSummary = false;
       compacting = true;
       try {
-        await compactWithGemini(world);
+        await compactStory(world);
       } finally {
         compacting = false;
       }

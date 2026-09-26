@@ -1,54 +1,28 @@
-import { pathLength, placeOf } from "./map.js";
-import type { ActionKind, ActionOption, Person, PlaceId, World } from "./types.js";
+import { centerOf, placeOf } from "./map.js";
+import type { Band, Item, Person, PlaceId, ResourceNode, StepOption, World } from "./types.js";
+import { carryCount, dist } from "./types.js";
+import { siteNeeds } from "./construction.js";
 
-const HEAVY = new Set<ActionKind>(["farm", "haul", "watch"]);
+/**
+ * Law is ordinary code and stays that way. Bands are hard limits on the step
+ * list; custom is a preference the scorer (reflex now, spine later) may weigh.
+ * Nothing here calls a model.
+ */
 
-export function customBonus(person: Person, kind: ActionKind): number {
-  if (person.band === "elder" && (kind === "teach" || kind === "speak")) return 18;
-  if (person.band === "toddler" || person.band === "child" || person.band === "youth") {
-    if (kind === "play" || kind === "learn") return 12;
-    if (person.gender === "male" && (kind === "forage" || kind === "farm")) return 8;
-    if (person.gender === "female" && (kind === "cook" || kind === "mend" || kind === "care")) return 8;
-    return 0;
-  }
-  if (person.gender === "male" && (kind === "farm" || kind === "haul" || kind === "watch")) return 14;
-  if (person.gender === "female" && (kind === "cook" || kind === "mend" || kind === "heal" || kind === "forage" || kind === "care")) {
-    return 14;
-  }
-  return 0;
-}
+const CAPABLE: Band[] = ["youth", "adult", "elder"];
 
-export function skillFor(kind: ActionKind): "farm" | "cook" | "mend" | "forage" | "haul" | "heal" | "teach" | "play" | null {
-  switch (kind) {
-    case "farm":
-      return "farm";
-    case "cook":
-      return "cook";
-    case "mend":
-      return "mend";
-    case "forage":
-      return "forage";
-    case "haul":
-      return "haul";
-    case "heal":
-      return "heal";
-    case "teach":
-    case "learn":
-      return "teach";
-    case "play":
-      return "play";
-    default:
-      return null;
-  }
+export function capableMember(person: Person): boolean {
+  return CAPABLE.includes(person.band);
 }
 
 export function isCovered(person: Person, world: World): boolean {
   return world.people.some(
     (other) =>
-      other.household === person.household &&
+      other.alive &&
       other.id !== person.id &&
-      other.place === person.place &&
-      (other.band === "youth" || other.band === "adult" || other.band === "elder"),
+      other.household === person.household &&
+      capableMember(other) &&
+      dist(other, person) <= 3.5,
   );
 }
 
@@ -57,13 +31,18 @@ export function isDistressed(person: Person, world: World): boolean {
 }
 
 export function nightSafe(person: Person, world: World): boolean {
-  if (person.place === person.home) return true;
-  if (person.band === "youth" && person.place === "porch") return true;
+  const home = placeOf(person.home);
+  if (dist(person, { x: home.x, y: home.y }) <= home.r + 3) return true;
+  if (person.band === "youth") {
+    const porch = placeOf("porch");
+    if (dist(person, { x: porch.x, y: porch.y }) <= porch.r + 2) return true;
+  }
   return world.people.some(
     (other) =>
+      other.alive &&
       person.guardians.includes(other.id) &&
-      other.place === person.place &&
-      (other.band === "youth" || other.band === "adult" || other.band === "elder"),
+      capableMember(other) &&
+      dist(other, person) <= 3.5,
   );
 }
 
@@ -73,151 +52,254 @@ export function underCurfew(person: Person, world: World): boolean {
   return !nightSafe(person, world);
 }
 
-function capable(world: World, household: string): Person[] {
-  return world.people.filter(
-    (person) =>
-      person.household === household &&
-      (person.band === "youth" || person.band === "adult" || person.band === "elder"),
-  );
+function capableOf(household: string, world: World): Person[] {
+  return world.people.filter((person) => person.alive && person.household === household && capableMember(person));
 }
 
-/** Closest capable household member, stable by id when distances tie. */
+/** Closest capable household member to a toddler in need, stable by id on ties. */
 export function assignedToddler(person: Person, world: World): Person | null {
-  if (person.band === "toddler" || person.band === "child") return null;
+  if (!capableMember(person)) return null;
   const toddlers = world.people.filter(
-    (other) => other.household === person.household && other.band === "toddler" && (isDistressed(other, world) || (world.phase === "night" && other.place !== other.home)),
+    (other) =>
+      other.alive &&
+      other.household === person.household &&
+      other.band === "toddler" &&
+      (isDistressed(other, world) || (world.phase === "night" && dist(other, centerOf(other.home)) > placeOf(other.home).r + 3)),
   );
-  if (toddlers.length === 0) return null;
   const toddler = toddlers[0];
   if (!toddler) return null;
-  const ranked = capable(world, toddler.household)
-    .map((candidate) => ({ candidate, distance: pathLength(candidate.place, toddler.place) }))
+  const ranked = capableOf(toddler.household, world)
+    .map((candidate) => ({ candidate, distance: dist(candidate, toddler) }))
     .sort((left, right) => left.distance - right.distance || left.candidate.id.localeCompare(right.candidate.id));
   if (ranked[0]?.candidate.id !== person.id) return null;
   return toddler;
 }
 
-export function option(id: string, kind: ActionKind, label: string, detail: string, place: PlaceId | null = null, escort = false): ActionOption {
-  return { id, kind, label, detail, place, escort };
+export function stepOption(
+  id: string,
+  kind: StepOption["kind"],
+  label: string,
+  detail: string,
+  extra: Partial<StepOption> = {},
+): StepOption {
+  return { id, kind, label, detail, ...extra };
 }
 
-export function goOption(place: PlaceId, escort = false): ActionOption {
-  const name = placeOf(place).name;
-  return option(`go_${place}`, "go", `Go to ${name}`, `Walk to ${name}.`, place, escort);
-}
-
-export function forcedAction(person: Person, world: World): ActionOption | null {
-  if (underCurfew(person, world)) return goOption(person.home);
+/** Law-forced steps override every choice: crying, curfew, guardian duty. */
+export function forcedStep(person: Person, world: World): StepOption | null {
+  if (underCurfew(person, world)) {
+    return stepOption("go_home", "walk", "Go home", "Curfew: walk home.", { place: person.home, dest: centerOf(person.home) });
+  }
+  // The ill keep to home and rest (unless hunger forces the walk to the pantry).
+  if (person.ill && person.hunger <= 70) {
+    if (!nearHome(person, 3)) {
+      return stepOption("go_home", "walk", "Go home", "Unwell: home to rest.", { place: person.home, dest: centerOf(person.home) });
+    }
+    return stepOption("rest", "rest", "Rest, unwell", "Sick: rest until it passes.");
+  }
   if (person.band === "toddler" && isDistressed(person, world)) {
-    return option("cry", "stay", "Cry for help", "Stay and call for a guardian.", null);
+    return stepOption("cry", "express", "Cry for help", "Left without a guardian.");
   }
   const toddler = assignedToddler(person, world);
   if (!toddler) return null;
-  if (person.place !== toddler.place) return goOption(toddler.place);
-  if (world.phase === "night" && toddler.place !== toddler.home) return goOption(toddler.home, true);
-  if (isDistressed(toddler, world)) return option("care", "care", "Care", "Settle the toddler.", null);
+  if (dist(person, toddler) > 1.8) {
+    return stepOption(`go_${toddler.id}`, "walk", `Go to ${toddler.name}`, "A toddler of the household needs someone.", { toId: toddler.id, dest: { x: toddler.x, y: toddler.y } });
+  }
+  const toddlerHome = centerOf(toddler.home);
+  const outLate = world.phase === "night" && dist(toddler, toddlerHome) > placeOf(toddler.home).r + 3;
+  if (outLate) {
+    return stepOption(`lead_${toddler.id}`, "walk", `Bring ${toddler.name} home`, "Lead the toddler home by the hand.", { toId: toddler.id, leadId: toddler.id, dest: toddlerHome });
+  }
+  if (isDistressed(toddler, world)) {
+    return stepOption(`care_${toddler.id}`, "care", `Settle ${toddler.name}`, "Stay and settle the toddler.", { toId: toddler.id });
+  }
   return null;
 }
 
-function at(person: Person, ...places: PlaceId[]): boolean {
-  return places.includes(person.place);
+function atRegion(person: Person, id: PlaceId, slack = 2): boolean {
+  const place = placeOf(id);
+  return dist(person, { x: place.x, y: place.y }) <= place.r + slack;
 }
 
-export function legalActions(person: Person, world: World): ActionOption[] {
-  const forced = forcedAction(person, world);
+export function nearHome(person: Person, slack = 2): boolean {
+  return atRegion(person, person.home, slack);
+}
+
+/** Nodes worth working, ranked by usefulness then distance. */
+export function workableNodes(world: World, person: Person, kinds: ResourceNode["kind"][], range = 60): ResourceNode[] {
+  return world.nodes
+    .filter((node) => {
+      if (!kinds.includes(node.kind)) return false;
+      if (node.kind === "crop") return node.stage >= node.maxStage || node.stage === 0;
+      return node.stage > 0;
+    })
+    .map((node) => ({ node, distance: dist(person, node) }))
+    .filter((entry) => entry.distance <= range)
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, 6)
+    .map((entry) => entry.node);
+}
+
+/**
+ * Every legal step this person could take right now. Law has already removed
+ * what their band forbids; the spine (or the provisional reflex) only ever
+ * chooses from this list.
+ */
+export function legalSteps(person: Person, world: World): StepOption[] {
+  const forced = forcedStep(person, world);
   if (forced) return [forced];
 
-  const day = world.phase === "day" || world.phase === "dawn" || world.phase === "dusk";
-  const food = world.food[person.household] ?? 0;
-  const acts: ActionOption[] = [option("stay", "stay", "Stay", "Remain here and watch.")];
+  const acts: StepOption[] = [];
+  const day = world.phase !== "night";
 
+  // Walking is free for everyone old enough; toddlers are led, never alone.
+  // At night the young may only head for home (youth may also take the porch).
   if (person.band !== "toddler") {
-    for (const place of ["grove", "mill", "field", "well", "vale", "square", "hearth", "market", "rise", "porch"] as PlaceId[]) {
-      if (place !== person.place) {
-        const escort = place === person.home && world.people.some(
-          (kid) => kid.band === "toddler" && kid.household === person.household && kid.place === person.place && kid.place !== kid.home,
-        );
-        acts.push(goOption(place, escort));
+    const nightBound = (person.band === "child" || person.band === "youth") && world.phase === "night";
+    for (const id of ["grove", "mill", "field", "well", "vale", "square", "hearth", "market", "rise", "porch"] as PlaceId[]) {
+      if (nightBound && id !== person.home && !(person.band === "youth" && id === "porch")) continue;
+      if (!atRegion(person, id, 0)) {
+        acts.push(stepOption(`walk_${id}`, "walk", `Walk to ${placeOf(id).name}`, `Head toward ${placeOf(id).name}.`, { place: id, dest: centerOf(id) }));
       }
     }
   }
 
-  const work = (kind: ActionKind, label: string, detail: string) => {
-    acts.push(option(kind, kind, label, detail));
-  };
-
-  if (food > 0 && person.hunger > 20 && at(person, person.home, "hearth")) work("eat", "Eat", "Eat from the household store.");
-  if (person.energy < 85) work("rest", "Rest", "Sit and recover.");
-  if (at(person, person.home) && (world.phase === "night" || world.phase === "dawn" || person.energy < 35)) {
-    work("sleep", "Sleep", "Sleep at home.");
+  acts.push(stepOption("rest", "rest", "Rest", "Sit and recover."));
+  if (nearHome(person) && (world.phase === "night" || world.phase === "dawn" || person.energy < 30)) {
+    acts.push(stepOption("sleep", "sleep", "Sleep", "Sleep at home."));
   }
-  work("speak", "Speak", "Say something in the town lexicon.");
+  acts.push(stepOption("express", "express", "Express", "Show a feeling in the town lexicon."));
 
   if (person.band === "toddler") {
-    if (at(person, person.home, "square")) work("play", "Play", "Play where they stand.");
-    return trimHeavy(person, acts);
+    if (atRegion(person, person.home) || atRegion(person, "square")) {
+      acts.push(stepOption("play", "play", "Play", "Play where they stand."));
+    }
+    return dedupe(acts);
+  }
+
+  // A promise made in conversation rides the legal list until it is kept;
+  // choosing it is still the spine's (or reflex's) decision, never forced.
+  const owed = person.owe;
+  const owedTarget = owed ? world.people.find((item) => item.id === owed.toId && item.alive) : null;
+  if (owed && owedTarget) {
+    acts.push(
+      stepOption(`give_${owedTarget.id}`, "give", `Bring ${owed.qty} ${owed.item} to ${owedTarget.name}`, "A favor promised in conversation.", { toId: owedTarget.id }),
+    );
+  }
+
+  const storage = world.storages[person.household];
+  const handFood = (person.carry.grain ?? 0) + Math.floor((person.carry.berries ?? 0) / 2);
+  if (person.hunger > 25 && (storage?.grain ?? 0) + (storage?.berries ?? 0) + handFood > 0) {
+    acts.push(stepOption("eat", "eat", "Eat", "Take a meal — from the hand if it holds food, else the household store."));
+  }
+  if (carryCount(person.carry) > 0) {
+    acts.push(stepOption("store", "store", "Store goods", "Carry what you hold to the household store."));
   }
 
   if (person.band === "child") {
-    if (day && at(person, person.home, "square", "field", "grove")) work("play", "Play", "Play nearby.");
-    if (day) work("learn", "Learn", "Watch and practice.");
-    if (day && person.place === "grove" && person.choresToday < 2) work("forage", "Forage", "A light gathering chore.");
-    return trimHeavy(person, acts);
+    if (day && (nearHome(person) || atRegion(person, "square") || atRegion(person, "field"))) {
+      acts.push(stepOption("play", "play", "Play", "Play nearby."));
+    }
+    acts.push(stepOption("learn", "learn", "Learn", "Watch and practice."));
+    if (day && person.choresToday < 2) {
+      for (const node of workableNodes(world, person, ["berry"])) {
+        acts.push(stepOption(`harvest_${node.id}`, "harvest", "Pick berries", "A light gathering chore.", { nodeId: node.id }));
+      }
+    }
+    return dedupe(acts);
   }
 
   if (person.band === "youth") {
-    if (day && at(person, person.home, "square", "field")) work("play", "Play", "Play with the younger ones.");
-    work("learn", "Learn", "Practice a skill.");
-    if (person.place === "field") work("farm", "Farm", "Apprentice field work.");
-    if (person.place === "hearth") work("cook", "Cook", "Help at the hearth.");
-    if (person.place === "market") work("mend", "Mend", "Mend cloth at the loft.");
-    if (person.place === "grove") work("forage", "Forage", "Gather from the grove.");
-    work("heal", "Heal", "Tend someone worn down.");
+    if (day) acts.push(stepOption("play", "play", "Play", "Play with the younger ones."));
+    acts.push(stepOption("learn", "learn", "Learn", "Practice a skill."));
+    for (const node of workableNodes(world, person, ["berry"])) {
+      acts.push(stepOption(`harvest_${node.id}`, "harvest", "Pick berries", "Gather from the bush.", { nodeId: node.id }));
+    }
+    for (const node of workableNodes(world, person, ["crop"]).filter((item) => item.stage >= item.maxStage)) {
+      acts.push(stepOption(`harvest_${node.id}`, "harvest", "Harvest the crop", "Cut and bind the grain.", { nodeId: node.id }));
+    }
+    for (const node of workableNodes(world, person, ["crop"]).filter((item) => item.stage === 0)) {
+      acts.push(stepOption(`plant_${node.id}`, "plant", "Sow the plot", "Put seed to soil.", { nodeId: node.id }));
+    }
+    for (const node of workableNodes(world, person, ["tree"])) {
+      acts.push(stepOption(`chop_${node.id}`, "chop", "Chop wood", "Fell limbs for the stack.", { nodeId: node.id }));
+    }
     maybeCare(person, world, acts);
-    return trimHeavy(person, acts);
+    return dedupe(acts);
   }
 
   if (person.band === "elder") {
-    if (person.place === "hearth") work("cook", "Cook", "A light pot.");
-    if (person.place === "market") work("mend", "Mend", "Slow careful mending.");
-    if (person.place === "grove") work("forage", "Forage", "Light gathering.");
-    if (at(person, "porch", "square")) work("teach", "Teach", "Give a lesson.");
-    work("heal", "Heal", "Tend someone worn down.");
-    maybeCare(person, world, acts);
-    if ((person.place === person.home || person.place === "rise") && person.bricks < 6 && (world.wood[person.household] ?? 0) > 0 && (world.stone[person.household] ?? 0) > 0) {
-      work("build", "Lay a brick", "Spend one wood and one stone on a wall of your own.");
+    for (const node of workableNodes(world, person, ["berry"])) {
+      acts.push(stepOption(`harvest_${node.id}`, "harvest", "Pick berries", "Light gathering.", { nodeId: node.id }));
     }
-    return trimHeavy(person, acts);
+    for (const node of workableNodes(world, person, ["crop"])) {
+      if (node.stage >= node.maxStage) acts.push(stepOption(`harvest_${node.id}`, "harvest", "Harvest the crop", "Cut and bind the grain.", { nodeId: node.id }));
+      if (node.stage === 0) acts.push(stepOption(`plant_${node.id}`, "plant", "Sow the plot", "Put seed to soil.", { nodeId: node.id }));
+    }
+    if (atRegion(person, "porch", 3) || atRegion(person, "square", 3)) {
+      acts.push(stepOption("teach", "teach", "Teach", "Give a lesson to whoever is near."));
+    }
+    maybeCare(person, world, acts);
+    appendBuildSteps(person, world, acts);
+    return dedupe(acts);
   }
 
-  if (person.place === "field") work("farm", "Farm", "Work the field.");
-  if (person.place === "field" && person.energy > 25) work("haul", "Haul", "Carry stores home in spirit: add to the larder.");
-  if (person.place === "hearth") work("cook", "Cook", "Cook at the hearth.");
-  if (person.place === "market") work("mend", "Mend", "Mend at the loft.");
-  if (person.place === "grove") work("forage", "Forage", "Forage the grove.");
-  if (at(person, "porch", "square") && person.skills.teach >= 30) work("teach", "Teach", "Teach whoever is listening.");
-  work("heal", "Heal", "Tend someone worn down.");
-  if ((world.phase === "night" || world.phase === "dusk") && person.place === "square") work("watch", "Watch", "Keep the square.");
-  if ((person.place === person.home || person.place === "rise") && person.bricks < 6 && (world.wood[person.household] ?? 0) > 0 && (world.stone[person.household] ?? 0) > 0) {
-    work("build", "Lay a brick", "Spend one wood and one stone on a wall of your own.");
+  // adults
+  for (const node of workableNodes(world, person, ["tree"])) {
+    acts.push(stepOption(`chop_${node.id}`, "chop", "Chop wood", "Fell limbs for the stack.", { nodeId: node.id }));
+  }
+  for (const node of workableNodes(world, person, ["rock"])) {
+    acts.push(stepOption(`mine_${node.id}`, "mine", "Mine stone", "Break stone from the outcrop.", { nodeId: node.id }));
+  }
+  for (const node of workableNodes(world, person, ["berry"])) {
+    acts.push(stepOption(`harvest_${node.id}`, "harvest", "Pick berries", "Gather from the bush.", { nodeId: node.id }));
+  }
+  for (const node of workableNodes(world, person, ["crop"])) {
+    if (node.stage >= node.maxStage) acts.push(stepOption(`harvest_${node.id}`, "harvest", "Harvest the crop", "Cut and bind the grain.", { nodeId: node.id }));
+    if (node.stage === 0) acts.push(stepOption(`plant_${node.id}`, "plant", "Sow the plot", "Put seed to soil.", { nodeId: node.id }));
+  }
+  if (atRegion(person, "porch", 3) || atRegion(person, "square", 3)) {
+    if (person.skills.teach >= 30) acts.push(stepOption("teach", "teach", "Teach", "Teach whoever is listening."));
   }
   maybeCare(person, world, acts);
-  return trimHeavy(person, acts);
+  appendBuildSteps(person, world, acts);
+  return dedupe(acts);
 }
 
-function maybeCare(person: Person, world: World, acts: ActionOption[]): void {
+function maybeCare(person: Person, world: World, acts: StepOption[]): void {
   const kid = world.people.find(
-    (other) => other.band === "toddler" && other.household === person.household && other.place === person.place && (other.hunger > 40 || other.belonging < 45),
+    (other) =>
+      other.alive &&
+      other.band === "toddler" &&
+      other.household === person.household &&
+      dist(other, person) <= 3.5 &&
+      (other.hunger > 40 || other.belonging < 45),
   );
-  if (kid) acts.push(option("care", "care", "Care", "Feed and settle the toddler."));
+  if (kid) acts.push(stepOption(`care_${kid.id}`, "care", `Care for ${kid.name}`, "Feed and settle the toddler.", { toId: kid.id }));
 }
 
-function trimHeavy(person: Person, acts: ActionOption[]): ActionOption[] {
-  if (person.energy >= 15) return dedupe(acts);
-  return dedupe(acts.filter((act) => !HEAVY.has(act.kind)));
+/** Building options: deliver to a marked site, raise its walls, or mark a new one. */
+function appendBuildSteps(person: Person, world: World, acts: StepOption[]): void {
+  for (const site of world.sites) {
+    if (site.ownerId !== person.id) continue;
+    if (site.stage >= site.stages) continue;
+    if (siteNeeds(site) <= 0) {
+      acts.push(stepOption(`build_${site.id}`, "build", `Raise the ${site.kind}`, "Work the materials already lying there.", { siteId: site.id }));
+      continue;
+    }
+    const storage = world.storages[person.household];
+    const canFurnish = (Object.keys(site.need) as Item[]).some(
+      (item) =>
+        (site.need[item] ?? 0) > (site.have[item] ?? 0) &&
+        (storage?.[item] ?? 0) + (person.carry[item] ?? 0) > 0,
+    );
+    if (canFurnish) {
+      acts.push(stepOption(`deliver_${site.id}`, "store", `Carry materials to the ${site.kind}`, "Walk what the site still owes to it.", { siteId: site.id }));
+    }
+  }
 }
 
-function dedupe(acts: ActionOption[]): ActionOption[] {
+function dedupe(acts: StepOption[]): StepOption[] {
   const seen = new Set<string>();
   return acts.filter((act) => {
     if (seen.has(act.id)) return false;
@@ -229,26 +311,20 @@ function dedupe(acts: ActionOption[]): ActionOption[] {
 export function lawLines(person: Pick<Person, "band" | "age" | "gender" | "household">): string[] {
   const lines = [`${person.band}, age ${person.age}`];
   if (person.band === "toddler") {
-    lines.push("Stays with a household youth or adult. Cannot walk the town alone. Speech is a handful of words. If left, they cry and the nearest guardian must come.");
+    lines.push("Stays within sight of a household youth or adult. Cannot walk the town alone. Speech is a handful of words. If left, they cry and the nearest guardian must come.");
   } else if (person.band === "child") {
-    lines.push("Play, lessons, and at most two light gathering chores in a day. No tools, hauling, trade, or night watch. Home by night unless a guardian is with them.");
+    lines.push("Play, lessons, and at most two light gathering chores in a day. No axes, no quarry work, hauling only what small hands carry. Home by night unless a guardian is with them.");
   } else if (person.band === "youth") {
-    lines.push("Apprentice work is allowed. No heavy haul and no night watch. No town-wide announcement. Home, or the elder porch, by night.");
+    lines.push("Apprentice work is allowed: wood, berries, crops. No quarry stone and no night watch. No town-wide announcement. Home, or the elder porch, by night.");
   } else if (person.band === "adult") {
-    lines.push("Full work, care, and night watch. May announce to the whole town from the square. May speak in private.");
+    lines.push("Full work: wood, stone, crops, building, care, and night watch. May announce to the whole town from the square. May speak in private.");
   } else {
-    lines.push("No field labor, hauling, or watch. Teaching, mending, and counsel come first. May announce from the square.");
+    lines.push("No felling and no quarry work. Teaching, gathering, sowing, and counsel come first. May announce from the square.");
   }
   if (person.gender === "male") {
-    lines.push("Jevhold custom, a preference only: when two acts are close, men lean to the field, hauling, and the watch.");
+    lines.push("Jevhold custom, a preference only: when two acts are close, men lean to timber, stone, and the watch.");
   } else {
     lines.push("Jevhold custom, a preference only: when two acts are close, women lean to the hearth, mending, healing, forage, and care.");
-  }
-  if (person.band === "child" || person.band === "youth") {
-    lines.push("Among children, outdoor chores lean toward boys and hearth chores toward girls. A stronger skill still wins.");
-  }
-  if (person.household === "market" && person.band !== "toddler" && person.band !== "child") {
-    lines.push("If Jevik is left alone, the nearest capable person in the Market household goes to him and brings him home at night.");
   }
   return lines;
 }

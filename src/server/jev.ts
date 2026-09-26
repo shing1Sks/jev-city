@@ -1,212 +1,308 @@
-import { choice, noul, TypeSafeClient, type Questions } from "@typesafe-ai/sdk";
-import { allowedIntentIds, allowedTopicIds, allowedToneIds, TONES, TOPICS } from "../world/lexicon.js";
+import { carryLabel } from "../world/carry.js";
+import { allowedIntentIds, allowedTopicIds, allowedToneIds, INTENTS, TOPICS, TONES } from "../world/lexicon.js";
 import { placeOf } from "../world/map.js";
+import { recallFor } from "../world/memory.js";
 import { reflexDecide } from "../world/reflex.js";
-import { customBonus, legalActions } from "../world/rules.js";
-import { legalAudiences, othersHere } from "../world/speech.js";
+import { forcedStep, legalSteps } from "../world/rules.js";
 import { applyDecision } from "../world/sim.js";
+import { othersHere } from "../world/speech.js";
 import type { Decision, Person, World } from "../world/types.js";
-import { bondKey, clockLabel } from "../world/types.js";
 
-let client: TypeSafeClient | null = null;
+/**
+ * Jev, the spine — one SystemOne call per batch. The shared `state` text says
+ * who everyone is, what they were doing, and what surrounds them; the typed
+ * questions carry the choices themselves: one legal-step choice, a speak/keep
+ * noul pair, and three lexicon-stamp choices per person. Answers come back
+ * keyed by question name (q_<personId>_<field>) and are re-checked against the
+ * live legal step list; anything missing or illegal falls back to the
+ * brainstem reflex for that person only. Jev never writes dialogue — it picks
+ * stamps from the lexicon.
+ */
 
-function jevClient(): TypeSafeClient {
-  if (!client) {
-    client = new TypeSafeClient({
-      timeout: 12_000,
-      logLevel: "warn",
-      defaultModel: process.env.JEV_MODEL || "jev-latest",
-    });
-  }
-  return client;
+export interface JevConfig {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+  /** US dollars per million input tokens, for the running-cost estimate. */
+  priceIn: number;
+  /** US dollars per million output tokens (Jev output tokens are free: 0). */
+  priceOut: number;
+  /** Input+output tokens per rolling hour before the valve drops to reflex; 0 disables. */
+  tokenCap: number;
 }
 
-export async function decideWithJev(world: World, ids: string[]): Promise<void> {
-  const pending: string[] = [];
+function numEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+export function jevConfigFromEnv(): JevConfig | null {
+  const apiKey = process.env.TYPESAFE_API_KEY ?? process.env.JEV;
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    model: process.env.JEV_MODEL ?? process.env.TYPESAFE_MODEL ?? "jev-latest",
+    baseUrl: process.env.JEV_BASE_URL ?? process.env.TYPESAFE_BASE_URL ?? "https://api.typesafe.ai/v1",
+    // TypeSafe lists Jev at $42 per billion input tokens; output tokens are free.
+    priceIn: numEnv("JEV_PRICE_IN", 0.042),
+    priceOut: numEnv("JEV_PRICE_OUT", 0),
+    tokenCap: numEnv("JEV_HOURLY_TOKEN_CAP", 2_500_000),
+  };
+}
+
+// Rolling one-hour spend window, in server memory: the safety valve lives here
+// so old saves and other entry points never carry it.
+const budget = { hourStart: 0, spent: 0 };
+
+/** Test hook: start the hourly token window fresh. */
+export function resetJevBudget(): void {
+  budget.hourStart = 0;
+  budget.spent = 0;
+}
+
+// ---------------------------------------------------------------- wire types
+
+export type JevQuestion =
+  | { type: "choice"; instructions: string; criteria: Record<string, string | null> }
+  | { type: "noul"; instructions: string };
+
+export interface JevAnswer {
+  type?: string;
+  choice?: unknown;
+  noul?: unknown;
+  confidence?: unknown;
+}
+
+export interface JevRequest {
+  config: JevConfig;
+  state: string;
+  questions: Record<string, JevQuestion>;
+}
+
+export interface JevReply {
+  /** The concrete model version that answered, e.g. "jev-1.13.0". */
+  model?: string;
+  answers: Record<string, JevAnswer>;
+  usage: { input: number; output: number };
+}
+
+export type PostJev = (request: JevRequest) => Promise<JevReply>;
+
+/** Brainstem interrupts and toddlers never spend a spine call. */
+export function spineEligible(world: World, id: string): boolean {
+  const person = world.people.find((item) => item.id === id);
+  if (!person || !person.alive || person.step) return false;
+  if (person.band === "toddler") return false;
+  return forcedStep(person, world) === null;
+}
+
+// ---------------------------------------------------------------- request
+
+function line(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+const intentLabel = new Map(INTENTS.map((item) => [item.id, item.label]));
+const topicLabel = new Map(TOPICS.map((item) => [item.id, item.label]));
+const toneLabel = new Map(TONES.map((item) => [item.id, item.label]));
+
+/** Stamp ids are plain words ("greet", "food", "joy") — null criteria keeps the call lean. */
+function stampCriteria(ids: string[], labels: Map<string, string>): Record<string, string | null> {
+  return Object.fromEntries(ids.map((id) => [id, labels.get(id) ?? null]));
+}
+
+function personBlock(world: World, person: Person): string {
+  const near = othersHere(person, world).filter((other) => other.id !== person.id);
+  const here = near.map((other) => other.name);
+  const holding = carryLabel(person.carry);
+  const memory = recallFor(world, person, { nearby: near.map((other) => other.id), task: person.task?.label }).map(
+    (item) => `- ${line(item.text)}`,
+  );
+  // Legal steps and stamps are NOT listed here: they are the choice questions'
+  // criteria, so the model sees each option exactly once, where it matters.
+  return [
+    `## person ${person.id}`,
+    `${person.name}, ${person.band}, home ${placeOf(person.home).name}, now at ${placeOf(person.place).name}; ${line(world.weather)} ${world.phase}`,
+    `self: ${line(person.self.temper)}; wants ${line(person.self.want)}; fears ${line(person.self.fear)}`,
+    `hunger ${Math.round(person.hunger)}/100, energy ${Math.round(person.energy)}/100, belonging ${Math.round(person.belonging)}/100`,
+    `carrying: ${holding || "nothing"}`,
+    `task: ${person.task ? `${line(person.task.label)} (steps so far: ${person.task.chosen.join(", ") || "none"})` : "none"}`,
+    `last thought: ${line(person.because)}`,
+    memory.length > 0 ? `memory:\n${memory.join("\n")}` : "memory: none",
+    `nearby: ${here.length > 0 ? here.join(", ") : "nobody"}`,
+  ].join("\n");
+}
+
+export function buildQuestions(world: World, ids: string[]): { state: string; questions: Record<string, JevQuestion> } {
+  const header = `Town: day ${world.day}, ${String(world.hour).padStart(2, "0")}:${String(world.minute).padStart(2, "0")} ${world.phase}, ${world.weather}.`;
+  const questions: Record<string, JevQuestion> = {};
+  const blocks: string[] = [];
   for (const id of ids) {
     const person = world.people.find((item) => item.id === id);
-    if (!person || person.intent) continue;
-    const actions = legalActions(person, world);
-    if (actions.length <= 1) {
-      applyDecision(world, reflexDecide(world, id));
-      continue;
-    }
-    pending.push(id);
+    if (!person) continue;
+    blocks.push(personBlock(world, person));
+    const q = (field: string): string => `q_${person.id}_${field}`;
+    questions[q("step")] = {
+      type: "choice",
+      instructions: `Next step for ${person.name} (${person.id}) right now?`,
+      criteria: Object.fromEntries(
+        legalSteps(person, world).map((option) => [option.id, `${option.label} — ${line(option.detail)}`.slice(0, 120)]),
+      ),
+    };
+    questions[q("speak")] = { type: "noul", instructions: `Should ${person.name} voice a feeling to those nearby right now?` };
+    questions[q("keep")] = {
+      type: "noul",
+      instructions: `Should ${person.name} keep working on the current task (${person.task ? line(person.task.label) : "none"})?`,
+    };
+    questions[q("intent")] = { type: "choice", instructions: `Body-language intent if ${person.name} speaks.`, criteria: stampCriteria(allowedIntentIds(person.band), intentLabel) };
+    questions[q("topic")] = { type: "choice", instructions: `What ${person.name} would speak about.`, criteria: stampCriteria(allowedTopicIds(person.band), topicLabel) };
+    questions[q("tone")] = { type: "choice", instructions: `Tone of ${person.name}'s expression.`, criteria: stampCriteria(allowedToneIds(person.band), toneLabel) };
   }
-  if (pending.length === 0 || !process.env.TYPESAFE_API_KEY) {
-    if (!process.env.TYPESAFE_API_KEY) {
-      for (const id of pending) applyDecision(world, reflexDecide(world, id));
+  return { state: [header, ...blocks].join("\n\n"), questions };
+}
+
+// ---------------------------------------------------------------- response
+
+function choiceOf(answer: JevAnswer | undefined): string {
+  return typeof answer?.choice === "string" ? answer.choice : "";
+}
+
+function noulOf(answer: JevAnswer | undefined): number | null {
+  const value = answer?.noul;
+  return typeof value === "number" && value >= 0 && value <= 1 ? value : null;
+}
+
+/** Validate the answers for one person against the live legal list; null means fall back. */
+function decisionFrom(world: World, person: Person, answers: Record<string, JevAnswer>): Decision | null {
+  const q = (field: string): JevAnswer | undefined => answers[`q_${person.id}_${field}`];
+  const option = legalSteps(person, world).find((item) => item.id === choiceOf(q("step")));
+  if (!option) return null;
+  const intents = allowedIntentIds(person.band);
+  const topics = allowedTopicIds(person.band);
+  const tones = allowedToneIds(person.band);
+  const fallback = <T extends string>(value: string, allowed: T[], otherwise: T): T =>
+    allowed.includes(value as T) ? (value as T) : otherwise;
+  const speak = noulOf(q("speak"));
+  const keep = noulOf(q("keep"));
+  const confidence = q("step")?.confidence;
+  return {
+    personId: person.id,
+    stepId: option.id,
+    speak: speak === null ? true : speak >= 0.5,
+    audience: "here",
+    listenerId: null,
+    intentWord: fallback(choiceOf(q("intent")), intents, intents[0] ?? "tell"),
+    topic: fallback(choiceOf(q("topic")), topics, topics[0] ?? "work"),
+    tone: fallback(choiceOf(q("tone")), tones, tones[0] ?? "soft"),
+    // Jev never authors language: the record carries the chosen step's own label.
+    because: option.label.toLowerCase(),
+    task: { keep: keep !== null && keep >= 0.5 },
+    source: "jev",
+    confidence: typeof confidence === "number" ? Math.min(1, Math.max(0, confidence)) : 1,
+  };
+}
+
+/**
+ * Parse a keyed answer map into decisions, one per requested id, in order.
+ * Missing or illegal entries fall back to the reflex for that person only;
+ * world.soul.lastError records how many needed the safety net.
+ */
+export function parseJevAnswers(world: World, ids: string[], answers: Record<string, JevAnswer>): Decision[] {
+  const map = answers && typeof answers === "object" ? answers : {};
+  const decisions: Decision[] = [];
+  let fallbacks = 0;
+  for (const id of ids) {
+    const person = world.people.find((item) => item.id === id);
+    if (!person || !person.alive || person.step) continue;
+    const decision = decisionFrom(world, person, map);
+    if (decision) decisions.push(decision);
+    else {
+      decisions.push(reflexDecide(world, id));
+      fallbacks += 1;
     }
+  }
+  world.soul.lastError = fallbacks > 0 ? `jev: ${fallbacks} of ${ids.length} decision(s) fell back to reflex` : null;
+  return decisions;
+}
+
+// ---------------------------------------------------------------- transport
+
+export const postJev: PostJev = async (request) => {
+  const response = await fetch(`${request.config.baseUrl}/systemone`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${request.config.apiKey}`,
+    },
+    body: JSON.stringify({
+      state: request.state,
+      model: request.config.model,
+      questions: request.questions,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`jev: endpoint answered ${response.status}`);
+  }
+  const data = (await response.json()) as {
+    model?: unknown;
+    answers?: unknown;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  if (!data.answers || typeof data.answers !== "object") {
+    throw new Error("jev: no answers object in response");
+  }
+  return {
+    model: typeof data.model === "string" ? data.model : undefined,
+    answers: data.answers as Record<string, JevAnswer>,
+    usage: { input: data.usage?.input_tokens ?? 0, output: data.usage?.output_tokens ?? 0 },
+  };
+};
+
+/**
+ * Ask the spine for the next step of every id given. Ids the brainstem owns
+ * (toddlers, law-forced, already stepping) are decided locally for free; the
+ * rest share one typed call. Any transport failure sends the whole batch to
+ * the reflex so the town never stalls.
+ */
+export async function decideWithJev(
+  world: World,
+  ids: string[],
+  config: JevConfig | null = jevConfigFromEnv(),
+  post: PostJev = postJev,
+): Promise<void> {
+  const spine = ids.filter((id) => spineEligible(world, id));
+  const local = ids.filter((id) => !spine.includes(id));
+  for (const id of local) applyDecision(world, reflexDecide(world, id));
+  if (spine.length === 0) return;
+  if (!config) {
+    for (const id of spine) applyDecision(world, reflexDecide(world, id));
     return;
   }
-
-  const questions: Questions = {};
-  const meta = new Map<string, { audiences: ReturnType<typeof legalAudiences>; others: Person[] }>();
-  for (const id of pending) {
-    const person = world.people.find((item) => item.id === id);
-    if (!person) continue;
-    const actions = legalActions(person, world);
-    const audiences = legalAudiences(person, world);
-    const others = othersHere(person, world);
-    meta.set(id, { audiences, others });
-    const criteria = Object.fromEntries(actions.map((action) => [action.id, `${action.label}. ${action.detail}`]));
-    questions[`${id}__act`] = choice(
-      {
-        question: `Which legal act should ${person.name} do next?`,
-        temper: person.self.temper,
-        want: person.self.want,
-        fear: person.self.fear,
-        habit: person.self.habit,
-        passion: person.self.ambition.passion,
-        mood: person.mood,
-      },
-      criteria,
-    );
-    questions[`${id}__say`] = noul({
-      question: `Should ${person.name} speak out loud on this act?`,
-      yes: "A need, a greeting, a warning, or something only one person should hear.",
-      no: "Silence fits this moment.",
-    });
-    if (audiences.length > 1) {
-      questions[`${id}__who`] = choice(`Who is ${person.name}'s speech for?`, {
-        ...(audiences.includes("private") ? { private: "One person standing here. The rest do not hear it." } : {}),
-        ...(audiences.includes("here") ? { here: "Everyone in this place." } : {}),
-        ...(audiences.includes("town") ? { town: "An announcement to all of JEV City, from the square." } : {}),
-      });
-    }
-    if (audiences.includes("private") && others.length > 1) {
-      questions[`${id}__to`] = choice(
-        `If ${person.name} speaks in private, who is it for?`,
-        Object.fromEntries(others.map((other) => [other.id, `${other.name}, ${other.band}, ${other.self.temper}`])),
-      );
-    }
-    const intents = allowedIntentIds(person.band);
-    const topics = allowedTopicIds(person.band);
-    const tones = allowedToneIds(person.band);
-    questions[`${id}__word`] = choice(
-      `Which lexicon word carries ${person.name}'s meaning?`,
-      Object.fromEntries(intents.map((intent) => [intent, intent])),
-    );
-    questions[`${id}__topic`] = choice(
-      `What is ${person.name} speaking about?`,
-      Object.fromEntries(topics.map((topic) => [topic, TOPICS.find((item) => item.id === topic)?.label ?? topic])),
-    );
-    questions[`${id}__tone`] = choice(
-      `Which tone should color ${person.name}'s line?`,
-      Object.fromEntries(tones.map((tone) => [tone, TONES.find((item) => item.id === tone)?.label ?? tone])),
-    );
+  const { state, questions } = buildQuestions(world, spine);
+  const now = Date.now();
+  if (budget.hourStart === 0 || now - budget.hourStart >= 3_600_000) {
+    budget.hourStart = now;
+    budget.spent = 0;
   }
-
-  const state = {
-    town: "JEV City. Law has already removed illegal acts. Choose within the list. Custom is a preference, not a ban. If a person has a matter, spend the free turns reaching that one person and speaking with them in private. Do not chase food unless hunger is severe.",
-    clock: clockLabel(world.hour, world.minute),
-    phase: world.phase,
-    weather: world.weather,
-    people: world.people.map((person) => ({
-      id: person.id,
-      name: person.name,
-      place: placeOf(person.place).name,
-      band: person.band,
-      mood: person.mood,
-    })),
-    deciders: pending.flatMap((id) => {
-      const person = world.people.find((item) => item.id === id);
-      if (!person) return [];
-      return [{
-        id: person.id,
-        name: person.name,
-        age: person.age,
-        gender: person.gender,
-        band: person.band,
-        custom: person.self.custom,
-        customBias: customBonus(person, "farm"),
-        place: person.place,
-        home: person.home,
-        hunger: Math.round(person.hunger),
-        energy: Math.round(person.energy),
-        belonging: Math.round(person.belonging),
-        foodAtHome: world.food[person.household] ?? 0,
-        mood: person.mood,
-        note: person.innerNote,
-        temper: person.self.temper,
-        want: person.self.want,
-        fear: person.self.fear,
-        habit: person.self.habit,
-        passion: person.self.ambition.passion,
-        plan: person.self.ambition.plan,
-        likes: person.self.ambition.likes,
-        matter: person.matter
-          ? {
-              with: world.people.find((other) => other.id === person.matter?.withId)?.name ?? person.matter.withId,
-              kind: person.matter.kind,
-              step: person.matter.step,
-            }
-          : null,
-        nearby: othersHere(person, world).map((other) => other.name),
-        bonds: world.bonds
-          .filter((bond) => bond.a === person.id || bond.b === person.id)
-          .slice(0, 4)
-          .map((bond) => {
-            const otherId = bond.a === person.id ? bond.b : bond.a;
-            const other = world.people.find((item) => item.id === otherId);
-            return { with: other?.name ?? otherId, score: bond.score, note: bond.note, key: bondKey(bond.a, bond.b) };
-          }),
-        recent: person.memory.slice(-3).map((line) => line.text),
-      }];
-    }),
-  };
-
-  const model = process.env.JEV_MODEL || "jev-latest";
-  let result;
+  if (config.tokenCap > 0 && budget.spent >= config.tokenCap) {
+    // Jev is paid now: past the hourly valve the brainstem finishes the hour.
+    world.soul.lastError = `jev: hourly token cap reached (${config.tokenCap}) — reflex until the hour rolls`;
+    for (const id of spine) applyDecision(world, reflexDecide(world, id));
+    return;
+  }
   try {
-    result = await jevClient().systemOne({ state, questions, model });
+    const reply = await post({ config, state, questions });
+    const decisions = parseJevAnswers(world, spine, reply.answers);
+    world.soul.calls += 1;
+    world.soul.inputTokens += reply.usage.input;
+    world.soul.outputTokens += reply.usage.output;
+    world.soul.lastModel = reply.model ?? config.model;
+    budget.spent += reply.usage.input + reply.usage.output;
+    world.soul.tokensThisHour = budget.spent;
+    world.soul.costUsd = (world.soul.costUsd ?? 0) + (reply.usage.input / 1e6) * config.priceIn + (reply.usage.output / 1e6) * config.priceOut;
+    for (const decision of decisions) applyDecision(world, decision);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (model !== "jev-preview" && /model|not found|404/i.test(message)) {
-      result = await jevClient().systemOne({ state, questions, model: "jev-preview" });
-    } else {
-      throw error;
-    }
-  }
-
-  world.soul.lastModel = result.model;
-  world.soul.calls += 1;
-  world.soul.inputTokens += result.usage.input_tokens;
-  world.soul.outputTokens += result.usage.output_tokens;
-  world.soul.lastError = null;
-
-  const answers = result.answers as Record<string, { type: string; choice?: string; confidence?: number; noul?: number }>;
-  for (const id of pending) {
-    const person = world.people.find((item) => item.id === id);
-    const info = meta.get(id);
-    if (!person || !info) continue;
-    const act = answers[`${id}__act`];
-    if (!act || act.type !== "choice" || !act.choice || (act.confidence ?? 1) < 0.4) {
-      const fallback = reflexDecide(world, id);
-      fallback.because = "JEV was unsure, so reflex chose";
-      applyDecision(world, fallback);
-      continue;
-    }
-    const say = answers[`${id}__say`];
-    const who = answers[`${id}__who`];
-    const to = answers[`${id}__to`];
-    const word = answers[`${id}__word`];
-    const topic = answers[`${id}__topic`];
-    const tone = answers[`${id}__tone`];
-    const audience = (who?.choice ?? info.audiences[0] ?? "here") as Decision["audience"];
-    const decision: Decision = {
-      personId: id,
-      actionId: act.choice,
-      speak: (say?.noul ?? 0) >= 0.55 || act.choice === "speak" || act.choice === "cry",
-      audience,
-      listenerId: audience === "private" ? (info.others.length === 1 ? info.others[0]?.id ?? null : to?.choice ?? null) : null,
-      intentWord: word?.choice ?? "tell",
-      topic: topic?.choice ?? "work",
-      tone: tone?.choice ?? "soft",
-      because: `JEV ${Math.round((act.confidence ?? 0) * 100)}%`,
-      source: "jev",
-      confidence: act.confidence ?? null,
-    };
-    applyDecision(world, decision);
+    world.soul.lastError = error instanceof Error ? error.message : "jev: failed";
+    for (const id of spine) applyDecision(world, reflexDecide(world, id));
   }
 }

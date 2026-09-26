@@ -1,99 +1,70 @@
 # JEV City
 
-A realtime town whose residents choose, speak, and remember. The base is ten people, a one-second tick, a closed lexicon, and two models with different jobs.
+A realtime town whose residents choose, speak, and remember. Eighteen residents, one-second ticks, a wildlife, a working economy of favors, and three minds with strictly separated jobs: Luna dreams, Jev decides, code keeps the law.
 
-## The split
+## The three minds
 
-JEV (TypeSafe System One) does not write prose and does not run the clock. It answers narrow typed questions: which legal act, whether to speak, whether that speech is private or public, and which lexicon word, topic, and tone. Code throws away anything illegal.
+**Luna (GPT-6, temperature 1.0) is the brain — never the hands.** One call every three real minutes, under hard valves (60 calls an hour, 600k tokens an hour; past the budget the brainstem takes over). Her contract is typed and narrow:
 
-Gemini (`gemini-flash-latest`) does not pick the next act. On a slow cadence, and when you press Compact memory, it rewrites:
+- **tasks** — a label and a why for a rostered resident. She names the work; she never picks the steps.
+- **thoughts and memory** — one inner line and one remembered line per person.
+- **dialogue** — a line in her own words carrying a typed act: `request`, `give`, `invite`, `warn`, `comfort`, `thank`, `tease`. The act is executed by code; the words are hers. A request co-located becomes a real owed favor.
+- **names** — newborns wait with a formula name until she names them; the rite warms the guardians.
 
-- each person's mood and the sentence they are carrying
-- bond notes between pairs
-- the public town memory
+Her prompt closes with an identity block as a drift anchor. Garbage output is dropped, never half-applied.
 
-Private lines stay out of the public paragraph. Their meaning goes into the pair's bond note. The file is `data/events.md`. A restart reloads moods and bonds from `data/inner.json`.
+**Jev (TypeSafe SystemOne) is the spine.** One batched call of six agents every six seconds answers narrow typed questions: which legal step, whether to speak, to whom, how. It is deterministic, priced, and it never writes a sentence. Illegal choices are thrown away; low confidence falls back to the reflex.
 
-The world itself is code: time, weather, hunger, energy, walking, stores, curfew, and the duty to a toddler. That is the part that must not drift.
+**Code is the body and brainstem.** Time, weather, hunger, energy, walking, stores, growth, curfew, guardian duty, illness confinement, animal instincts. The law can replace a step the spine picked. With no keys set, the town runs entirely on the brainstem — poorer inner life, same physics.
 
 ## Time
 
-One real second is ten minutes in town. The day starts at 07:00.
+One tick is one in-world minute; a day is 1,440 ticks, about 24 real minutes at 1× speed. Dawn 05–07, day 07–17, dusk 17–19, night 19–05. Weather steps every two hours through clear, cloudy, rain, wind, storm; storms sometimes fell a tree, and the windfall is shared — two wood to every household.
 
-- Dawn 05:00–07:00
-- Day 07:00–17:00
-- Dusk 17:00–19:00
-- Night 19:00–05:00
+The world RNG is deterministic mulberry32, persisted with the save, so fortune continues across restarts.
 
-Weather steps every four hours through clear, cloudy, rain, and wind. Rain makes outdoor work less attractive and costs energy away from shelter. Meal bells ring at 08:00, 13:00, and 19:00. They are news, not a forced animation. People still choose to eat.
+## Memory
 
-JEV is called when someone has finished their current act. Calls are batched, at most one batch every eight seconds, so a tick never waits on the network and the key is not spent on every second. While a call is queued they stand and the dossier says thinking. Low confidence falls back to the reflex policy. Work itself lasts several seconds of real time. Walking stays quicker.
+Every resident carries an episodic ring of sixteen memories with salience, polarity, and fade. Repeated episodes fold at dawn into at most six standing beliefs — ledgers, not prose. A favor Luna accepted that goes over two days stale fades unkept: the creditor records the slight, the debtor feels it, rivalry rises. Recall is scored by faded salience plus relevance (who is nearby, what the current task is about) and feeds both spine and brain prompts. Yesterday's public chronicle opens Luna's view of the town.
 
-## The ten
+## The town
 
-| Name | Age | Household | Place in the town |
-| --- | --- | --- | --- |
-| Jevaary | 38 | Vale, spouse of Jevine | Field, haul, watch. Counts food before he speaks. |
-| Jevine | 36 | Vale, spouse of Jevaary | Hearth and the children. Says a name when she speaks. |
-| Jevlin | 9 | Vale, their son | Wants to carry something heavy. Turns chores into play. |
-| Jevora | 6 | Vale, their daughter | Stays near Jevine. Repeats the last kind word. |
-| Jevoric | 67 | Porch, Jevina's grandfather | Teaches. Answers a question with a question. |
-| Jevina | 16 | Porch, his apprentice | Wants a real task. Offers help before she is asked. |
-| Jevon | 42 | Market, spouse of Jevara | The loft. Greets before he asks. |
-| Jevara | 29 | Market, mother of Jevik | Cloth and the toddler. Speaks softly, then once more. |
-| Jevik | 3 | Market, their son | One word and a point. Loud when left. |
-| Jevella | 23 | Grove, on her own | Forage and healing. Weather before feelings. |
+Eighteen seeded residents across households (see `cast.ts`), born as toddlers, aged in bands: toddler, child, youth, adult, elder. The law is hard where it must be — toddlers never walk alone, children carry no tools, the young are home by curfew, elders do not haul — and a preference (`Jevhold` custom in `rules.ts`) only where acts are otherwise close.
 
-Each person has a temper, a want, a fear, a habit, skills, a mood, and an inner note. Those go into JEV's state so the same legal list still produces different choices. Gemini is what keeps the mood and the note from flattening into the seed text.
+People build. Luna may set a project task; the town marks a site, hauls real materials, and raises it stage by stage. A finished build is a festival: every capable hand is invited to the square, and belonging rises.
 
-Bonds start from family and a few neighbor ties. Speech moves the score. Gemini rewrites the sentence attached to the score.
+## Illness and death
 
-## Law
+Most dawns nobody falls ill, but someone eventually does — one at a time, grown only. The ill keep to home and rest; hunger can still send them to the pantry. Comfort from another cures on the spot, or it passes after two days. A death is met with a vigil, and the town cools.
 
-Bands are hard. Custom is a preference JEV and the reflex can weigh. Custom never deletes an act.
+## Wildlife
 
-- **Toddler (0–4).** Cannot walk the town alone. Speech is a few words. If no household youth or adult is with them, they cry, and the nearest capable person in that household must come. At night that person brings them home.
-- **Child (5–12).** Play, lessons, and two light gathering chores a day. No tools, hauling, or watch. Home by night unless a guardian is there.
-- **Youth (13–17).** Apprentice work. No heavy haul, no night watch, no town-wide announcement. Home or the elder porch by night.
-- **Adult (18–59).** Full work, care, and the watch. May announce to the whole town from the square. May speak in private.
-- **Elder (60+).** No field labor, hauling, or watch. Teaching and counsel come first. May announce from the square.
+Three crows, two deer, and one town dog live on the grid with fear and hunger. Instincts are code: crows strip ripe berry bushes the town would harvest (witnessed steals enter the log), deer keep their distance, the dog follows adults. A local model can live above these instincts: set `LAYA_URL` and a SystemOne-compatible endpoint receives per-animal questions every fifteen seconds; its urges land as biases honored only when legal for the species and feasible on the grid. Unreachable or nonsensical — the instincts simply carry on. Cost: zero.
 
-Jevhold custom, when two acts are close: men lean to field, haul, and watch; women lean to hearth, mending, healing, forage, and care. Among children, outdoor chores lean toward boys and hearth chores toward girls. A clearly stronger skill outweighs the lean. The lean is data in `rules.ts`.
+## Trade
 
-Guardians are household facts, not a mood. Jevaary and Jevine answer for Jevlin and Jevora. Jevon and Jevara answer for Jevik. Jevoric answers for Jevina.
+The market and every raised stall are trade spots. When two grown traders from different households stand together and their stores complement — one holds a surplus of what the other lacks — two units swap for two. The scene is real: a log line, a word spoken, a memory kept, a warmer bond.
+
+## Visitors
+
+The gate is open. A visitor takes a name, walks in at the square, wanders the town, and talks — the same closed lexicon residents fall back to, parsed for `@name` address and suggestions. Residents remember what is said to them. Ten visitors per address.
 
 ## Speech
 
-They do not generate sentences. An utterance is three closed choices:
+Two registers. The reflex and visitors speak the closed lexicon — `WORD topic tone`, fifteen stamped tones — where every composition is legal by construction. Luna's lines are her own words, but what makes them causal is the typed act underneath, and private lines stay private: only the two present remember them.
 
-`WORD topic tone`
+## The story
 
-Words: greet, bye, yes, no, maybe, need, want, have, give, come, go, stay, stop, help, look, tell, ask, like, dislike, fear, thanks, sorry, play, work, rest, eat, danger, safe.
+Luna also narrates. On a slow, capped cadence she rewrites the town story from salient events — headline, body, three lines of gossip — plus each person's mood and inner note and the bond notes. She is told what was built and who visited, and forbidden from inventing more. The chronicle lives in `data/events.md`, restored from `data/inner.json` on restart. The old `gemini` name for this chip is retired: it is Luna, telemetry field `luna`.
 
-Topics: food, water, home, bed, work, rest, child, rain, sun, crop, wood, cloth, hurt, friend, path, night, play, tool, help, family.
+## Town history
 
-Tones are the fifteen stamps (joy, soft, sad, angry, fear, love, please, urgent, ask, tired, hunger, yes, no, rain, guard), each with one emoji.
-
-Toddlers and children have smaller lists. Code rejects a word outside the speaker's list.
-
-Audience is its own choice:
-
-- **private** — one person in the same place. Only those two remember the words. The map shows a seal until you select one of them.
-- **here** — everyone in that place.
-- **town** — an announcement. Adults and elders, and only from the square.
-
-`NEED food 🍽️` said in private to a spouse is a different event from the same line announced at the square. Both are legal compositions of the same lexicon.
-
-## Places
-
-Grove, field, well, Vale cottage, square, hearth, market loft, elder porch. People walk the paths between them. A toddler does not walk alone. A guardian walking home can bring a toddler who is with them.
-
-Stores are per household. Farming, foraging, and hauling fill the larder. Eating spends it.
-
-## What this base leaves for later
-
-More places, seasons, trade prices, sickness, a new resident, a richer lexicon, and letting Gemini's bond notes change who is willing to speak in private. The tick, the law, and the two channels (open and sealed) are the parts the rest should plug into.
+The log is a rolling eighty events — work, weather, law, meals, trades, build, life, speech — filterable in the web UI by kind, by person, and to today.
 
 ## Stack
 
-Vite, React, and a Node server. JEV's SDK is JavaScript, so the server is Node rather than FastAPI. The town view is drawn in SVG and CSS, original to this project, so positions and speech stamps stay tied to the simulation. No database: ten people fit in memory, with the chronicle on disk.
+Vite, React 18, Tailwind 4, and a Node server (SSE on 8787, web on 5173). TypeScript everywhere; tests run on `tsx` + `node:test` (`npm test`), types checked with `npm run check`. Town state, visitors, and per-address seats persist to Firestore; a Vercel batch endpoint (`api/stream.ts`) runs the town serverless with a lease, read-only streams for everyone else. The stage is drawn in absolutely positioned DOM and SVG, world units mapped directly to percent, so what you see is what the simulation knows.
+
+## Running costs
+
+Jev ≈ $0.85/day, Luna ≈ $0.27/day — about $1.10/day combined at stock cadence. The laya experiment is local and free; the story cadence is valve-capped. Nothing else spends.

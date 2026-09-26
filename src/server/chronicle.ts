@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderChronicle } from "../world/sim.js";
+import { salientEvents } from "../world/salience.js";
 import type { World } from "../world/types.js";
 import { clockLabel } from "../world/types.js";
 import { dataDir } from "./env.js";
@@ -52,17 +53,17 @@ export function loadInner(world: World): void {
       if (item.note) bond.note = item.note;
     }
   } catch {
-    world.gemini.lastError = "Could not read data/inner.json, so the town started from the seed.";
+    world.luna.lastError = "Could not read data/inner.json, so the town started from the seed.";
   }
 }
 
-interface GeminiPerson {
+interface StoryPerson {
   id?: unknown;
   mood?: unknown;
   note?: unknown;
 }
 
-interface GeminiBond {
+interface StoryBond {
   a?: unknown;
   b?: unknown;
   note?: unknown;
@@ -72,29 +73,29 @@ function asText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export async function compactWithGemini(world: World): Promise<void> {
+export async function compactStory(world: World): Promise<void> {
   const key = process.env.OPENAI_API_KEY;
-  world.gemini.model = process.env.STORY_MODEL || "gpt-6-luna";
+  world.luna.model = process.env.STORY_MODEL || "gpt-6-luna";
   if (!key) {
-    world.gemini.configured = false;
-    world.gemini.status = "off";
-    world.gemini.lastError = "OPENAI_API_KEY is not set";
+    world.luna.configured = false;
+    world.luna.status = "off";
+    world.luna.lastError = "OPENAI_API_KEY is not set";
     return;
   }
-  world.gemini.configured = true;
-  world.gemini.status = "working";
+  world.luna.configured = true;
+  world.luna.status = "working";
   try {
-    const text = await generate(key, world.gemini.model, promptFor(world));
+    const text = await generate(key, world.luna.model, promptFor(world));
     applyUpdate(world, text);
-    world.gemini.status = "ready";
-    world.gemini.lastError = null;
-    world.gemini.calls += 1;
+    world.luna.status = "ready";
+    world.luna.lastError = null;
+    world.luna.calls += 1;
     world.uncompiled = 0;
     world.chronicleAt = `${clockLabel(world.hour, world.minute)} village time`;
     writeChronicle(world);
   } catch (error) {
-    world.gemini.status = "error";
-    world.gemini.lastError = error instanceof Error ? error.message : "Storyteller failed";
+    world.luna.status = "error";
+    world.luna.lastError = error instanceof Error ? error.message : "Storyteller failed";
   }
 }
 
@@ -111,7 +112,10 @@ function promptFor(world: World): string {
     mood: person.mood,
     place: person.place,
   }));
-  const recent = world.log.slice(-12).map((event) => `${event.clock} ${event.audience === "private" ? "(private) " : ""}${event.text}`);
+  // Salience picks the day's material moments, not just the last dozen lines.
+  const recent = salientEvents(world, world.tick - 1440, 12).map(
+    (event) => `${event.clock} ${event.audience === "private" ? "(private) " : ""}${event.text}`,
+  );
   const built = world.expansions.map((item) => item.label);
   return [
     `This is the close of day ${world.summaryFor ?? world.day}. Write only what already happened.`,
@@ -169,7 +173,7 @@ function applyUpdate(world: World, raw: string): void {
     world.story.at = world.summaryFor ? "end of day" : "so far";
   }
   if (Array.isArray(parsed.people)) {
-    for (const item of parsed.people as GeminiPerson[]) {
+    for (const item of parsed.people as StoryPerson[]) {
       const id = asText(item.id);
       const person = world.people.find((candidate) => candidate.id === id);
       if (!person) continue;
@@ -180,7 +184,7 @@ function applyUpdate(world: World, raw: string): void {
     }
   }
   if (Array.isArray(parsed.bonds)) {
-    for (const item of parsed.bonds as GeminiBond[]) {
+    for (const item of parsed.bonds as StoryBond[]) {
       const a = asText(item.a);
       const b = asText(item.b);
       const note = asText(item.note);

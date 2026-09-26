@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { decideWithJev } from "./jev.js";
-import { compactWithGemini, loadInner, writeChronicle } from "./chronicle.js";
+import { beastConfigFromEnv, beastTick } from "./beasts.js";
+import { brainConfigFromEnv, brainTick } from "./brain.js";
+import { decideWithJev, jevConfigFromEnv } from "./jev.js";
+import { compactStory, loadInner, writeChronicle } from "./chronicle.js";
 import { loadEnv } from "./env.js";
 import { configureFirestore, firestoreReady, loadTown, saveTown } from "./store.js";
-import { VISITORS_OPEN } from "../world/gates.js";
+import { MINDS_LIVE, VISITORS_OPEN } from "../world/gates.js";
 import { enterTown, leaveTown, stepVisitors, visitorGo, visitorSay } from "./visitors.js";
 import { applyDecision, createWorld, snapshot, tick } from "../world/sim.js";
 import { reflexDecide } from "../world/reflex.js";
@@ -13,11 +15,22 @@ configureFirestore();
 
 const world = createWorld();
 loadInner(world);
-world.soul.configured = Boolean(process.env.TYPESAFE_API_KEY);
-world.gemini.configured = Boolean(process.env.OPENAI_API_KEY);
-world.gemini.model = process.env.STORY_MODEL || "gpt-6-luna";
-world.gemini.status = world.gemini.configured ? "ready" : "off";
-world.soul.mode = world.soul.configured ? "jev" : "reflex";
+// The pause is upstream of every mind: with MINDS_LIVE false no config object
+// is ever built, so no call site can fire even with keys present.
+const jev = MINDS_LIVE ? jevConfigFromEnv() : null;
+const luna = MINDS_LIVE ? brainConfigFromEnv() : null;
+const beast = MINDS_LIVE ? beastConfigFromEnv() : null;
+world.brain.configured = Boolean(luna);
+world.brain.status = world.brain.configured ? "ready" : "off";
+world.beast.configured = Boolean(beast);
+world.beast.status = world.beast.configured ? "ready" : "off";
+world.soul.configured = Boolean(jev);
+world.luna.configured = MINDS_LIVE ? Boolean(process.env.OPENAI_API_KEY) : false;
+world.luna.model = process.env.STORY_MODEL || "gpt-6-luna";
+world.luna.status = world.luna.configured ? "ready" : "off";
+// The spine (Stage 2) answers the step question whenever a key is present;
+// without one the brainstem reflex runs the town, unchanged.
+world.soul.mode = jev ? "jev" : "reflex";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = "127.0.0.1";
@@ -26,8 +39,19 @@ const thinking = new Set<string>();
 const queue: string[] = [];
 let pumping = false;
 let nextSoulAt = 0;
-const SOUL_GAP_MS = 8000;
+// Spine cadence: one batched call of 6 agents, one batch every 6 s (PLAN F6).
+const SOUL_GAP_MS = 6000;
+const SOUL_BATCH = 6;
+// Brain cadence: one Luna call every 3 real minutes, budgeted in brain.ts.
+const BRAIN_GAP_MS = 180_000;
+let nextBrainAt = 0;
+let brainRunning = false;
+// Beast cadence: one laya urge-batch every 15 s when LAYA_URL is set.
+const BEAST_GAP_MS = 15_000;
+let nextBeastAt = 0;
+let beastRunning = false;
 let paused = false;
+let speed = 1;
 let compacting = false;
 let lastCompact = 0;
 const storyCalls: number[] = [];
@@ -46,10 +70,28 @@ const server = createServer(async (request, response) => {
     send(response, 200, {
       ok: true,
       jev: world.soul.configured,
-      gemini: world.gemini.configured,
+      mode: world.soul.mode,
+      story: world.luna.configured,
       model: world.soul.lastModel,
-      geminiModel: world.gemini.model,
+      storyModel: world.luna.model,
+      spineCalls: world.soul.calls,
+      spineTokens: { input: world.soul.inputTokens, output: world.soul.outputTokens },
+      spineCostUsd: Number((world.soul.costUsd ?? 0).toFixed(4)),
+      spineTokensThisHour: world.soul.tokensThisHour ?? 0,
+      spineTokenCap: jev?.tokenCap ?? 0,
+      spineError: world.soul.lastError,
+      brain: world.brain.configured,
+      brainStatus: world.brain.status,
+      brainCalls: world.brain.calls,
+      brainTokens: { input: world.brain.inputTokens, output: world.brain.outputTokens },
+      brainCostUsd: Number((world.brain.costUsd ?? 0).toFixed(4)),
+      brainError: world.brain.lastError,
+      beast: world.beast.configured,
+      beastStatus: world.beast.status,
+      beastCalls: world.beast.calls,
+      beastError: world.beast.lastError,
       store: firestoreReady(),
+      speed,
     });
     return;
   }
@@ -72,6 +114,12 @@ const server = createServer(async (request, response) => {
     const body = await readJson<{ paused?: boolean }>(request);
     paused = Boolean(body.paused);
     send(response, 200, { paused });
+    return;
+  }
+  if (request.method === "POST" && url === "/api/speed") {
+    const body = await readJson<{ speed?: number }>(request);
+    speed = [1, 2, 4].includes(Number(body.speed)) ? Number(body.speed) : 1;
+    send(response, 200, { speed });
     return;
   }
   if (request.method === "POST" && url === "/api/soul") {
@@ -115,7 +163,7 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === "POST" && url === "/api/compact") {
     await runCompact();
-    send(response, 200, { status: world.gemini.status, error: world.gemini.lastError });
+    send(response, 200, { status: world.luna.status, error: world.luna.lastError });
     broadcast();
     return;
   }
@@ -136,14 +184,32 @@ setInterval(() => {
     return;
   }
   const mode = world.soul.mode === "jev" && world.soul.configured ? "open" : "reflex";
-  const ids = tick(world, mode);
-  for (const id of ids) {
-    if (thinking.has(id)) continue;
-    thinking.add(id);
-    queue.push(id);
+  for (let step = 0; step < speed; step += 1) {
+    const ids = tick(world, mode);
+    for (const id of ids) {
+      if (thinking.has(id)) continue;
+      thinking.add(id);
+      queue.push(id);
+    }
   }
   stepVisitors(world);
   void pump();
+  if (luna && !brainRunning && Date.now() >= nextBrainAt) {
+    brainRunning = true;
+    nextBrainAt = Date.now() + BRAIN_GAP_MS;
+    void brainTick(world, luna).finally(() => {
+      brainRunning = false;
+      broadcast();
+    });
+  }
+  if (beast && !beastRunning && Date.now() >= nextBeastAt) {
+    beastRunning = true;
+    nextBeastAt = Date.now() + BEAST_GAP_MS;
+    void beastTick(world, beast).finally(() => {
+      beastRunning = false;
+      broadcast();
+    });
+  }
   if (world.tick % 30 === 0) void saveTown(world);
   if (world.tick % 15 === 0) writeChronicle(world);
   if (world.needsSummary && storyBlock() === null) {
@@ -158,10 +224,10 @@ async function pump(): Promise<void> {
   if (world.soul.mode === "jev" && Date.now() < nextSoulAt) return;
   pumping = true;
   world.soul.inFlight = true;
-  const batch = queue.splice(0, 4);
+  const batch = queue.splice(0, SOUL_BATCH);
   try {
     if (world.soul.mode === "jev" && world.soul.configured) {
-      await decideWithJev(world, batch);
+      await decideWithJev(world, batch, jev);
     } else {
       for (const id of batch) applyDecision(world, reflexDecide(world, id));
     }
@@ -187,17 +253,21 @@ function storyBlock(): string | null {
 }
 
 async function runCompact(): Promise<void> {
+  if (!MINDS_LIVE) {
+    world.luna.status = "off";
+    return;
+  }
   const blocked = storyBlock();
   if (blocked) {
-    world.gemini.lastError = blocked;
+    world.luna.lastError = blocked;
     return;
   }
   if (compacting) return;
   compacting = true;
   lastCompact = Date.now();
   try {
-    await compactWithGemini(world);
-    if (world.gemini.status === "ready") storyCalls.push(Date.now());
+    await compactStory(world);
+    if (world.luna.status === "ready") storyCalls.push(Date.now());
   } finally {
     compacting = false;
     broadcast();

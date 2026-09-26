@@ -10,6 +10,7 @@ import {
   releaseTownLease,
 } from "../src/server/store.js";
 import { createWorld, snapshot } from "../src/world/sim.js";
+import { MINDS_LIVE } from "../src/world/gates.js";
 
 export const maxDuration = 240;
 
@@ -18,11 +19,13 @@ configureFirestore();
 
 function configureWorld() {
   const world = createWorld();
-  world.soul.configured = Boolean(process.env.TYPESAFE_API_KEY);
+  // While the town is paused, the deployed build runs mindless even where
+  // keys exist: the batch runner never opens a model connection.
+  world.soul.configured = MINDS_LIVE ? Boolean(process.env.TYPESAFE_API_KEY) : false;
   world.soul.mode = world.soul.configured ? "jev" : "reflex";
-  world.gemini.configured = Boolean(process.env.OPENAI_API_KEY);
-  world.gemini.model = process.env.STORY_MODEL || "gpt-6-luna";
-  world.gemini.status = world.gemini.configured ? "ready" : "off";
+  world.luna.configured = MINDS_LIVE ? Boolean(process.env.OPENAI_API_KEY) : false;
+  world.luna.model = process.env.STORY_MODEL || "gpt-6-luna";
+  world.luna.status = world.luna.configured ? "ready" : "off";
   return world;
 }
 

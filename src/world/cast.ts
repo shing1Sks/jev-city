@@ -630,7 +630,9 @@ function personFrom(seed: Seed): Person {
     alive: true,
     matter: null,
     settledWith: [],
-    intent: null,
+    step: null,
+    task: null,
+    carry: {},
     speech: null,
     memory: [],
     mood: seed.mood,
@@ -646,14 +648,18 @@ function bond(a: string, b: string, score: number, note: string, love = 25): Bon
 export function createCast(): {
   people: Person[];
   bonds: Bond[];
-  food: Record<string, number>;
-  wood: Record<string, number>;
-  stone: Record<string, number>;
-  cloth: Record<string, number>;
+  storages: Record<string, import("./types.js").Storage>;
 } {
   return {
     people: SEEDS.map(personFrom),
-    food: { vale: 8, market: 6, porch: 5, grove: 4, mill: 6, rise: 3 },
+    storages: {
+      vale: { wood: 4, stone: 1, grain: 6, berries: 4, cloth: 2 },
+      market: { wood: 3, stone: 1, grain: 4, berries: 3, cloth: 3 },
+      porch: { wood: 2, stone: 1, grain: 3, berries: 3, cloth: 1 },
+      grove: { wood: 5, stone: 1, grain: 2, berries: 5, cloth: 1 },
+      mill: { wood: 4, stone: 2, grain: 6, berries: 2, cloth: 4 },
+      rise: { wood: 2, stone: 4, grain: 2, berries: 2, cloth: 1 },
+    },
     bonds: [
       bond("jevaary", "jevine", 86, "spouses who split the day between field and hearth"),
       bond("jevaary", "jevlin", 84, "father and son"),
@@ -681,8 +687,5 @@ export function createCast(): {
       bond("jevaary", "jevoss", 36, "both want land and neither yields", 8),
       bond("jevaine", "jevine", 66, "sisters"),
     ],
-    wood: { vale: 4, market: 3, porch: 2, grove: 5, mill: 4, rise: 2 },
-    stone: { vale: 1, market: 1, porch: 1, grove: 1, mill: 2, rise: 4 },
-    cloth: { vale: 2, market: 3, porch: 1, grove: 1, mill: 4, rise: 1 },
   };
 }

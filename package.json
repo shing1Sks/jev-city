@@ -7,7 +7,7 @@
     "dev": "concurrently -n city,web -c cyan,green \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "node --import tsx src/server/index.ts",
     "dev:web": "vite",
-    "test": "node --import tsx --test tests/town.test.ts tests/visit.test.ts",
+    "test": "node --import tsx --test tests/body.test.ts tests/town.test.ts tests/spine.test.ts tests/brain.test.ts tests/visit.test.ts tests/memory.test.ts tests/animals.test.ts tests/events.test.ts tests/trade.test.ts",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json --noEmit"
   },
   "dependencies": {

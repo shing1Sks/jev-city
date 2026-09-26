@@ -153,8 +153,8 @@ export function stepVisitors(world: World): void {
       visitor.dest = null;
       continue;
     }
-    visitor.x += (dx / distance) * 7;
-    visitor.y += (dy / distance) * 7;
+    visitor.x += (dx / distance) * 0.5;
+    visitor.y += (dy / distance) * 0.5;
     visitor.facing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "front" : "back";
   }
 }

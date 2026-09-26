@@ -129,6 +129,7 @@ export async function addVisitorLog(id: string, line: string): Promise<void> {
 export async function saveTown(world: World): Promise<void> {
   try {
     await writeDoc("town/state", {
+      schema: world.schema,
       tick: world.tick,
       hour: world.hour,
       minute: world.minute,
@@ -138,13 +139,14 @@ export async function saveTown(world: World): Promise<void> {
       solMinutes: world.solMinutes,
       needsSummary: world.needsSummary,
       summaryFor: world.summaryFor,
+      rng: world.rng,
       story: world.story,
       chronicle: world.chronicle,
       chronicleAt: world.chronicleAt,
-      food: world.food,
-      wood: world.wood,
-      stone: world.stone,
-      cloth: world.cloth,
+      storages: world.storages,
+      nodes: world.nodes,
+      sites: world.sites,
+      animals: world.animals,
       expansions: world.expansions,
       bonds: world.bonds,
       log: world.log,
@@ -163,6 +165,9 @@ export async function loadTown(world: World): Promise<void> {
   try {
     const saved = await readDoc("town/state");
     if (!saved) return;
+    // A V1 save (place-state world, no schema field) describes a different
+    // town; Stage 2's continuous world starts fresh rather than half-loading.
+    if (saved.schema !== 2) return;
     if (typeof saved.tick === "number") world.tick = saved.tick;
     if (typeof saved.hour === "number") world.hour = saved.hour;
     if (typeof saved.minute === "number") world.minute = saved.minute;
@@ -174,15 +179,16 @@ export async function loadTown(world: World): Promise<void> {
       world.hour = Math.floor(saved.solMinutes / 60) % 24;
       world.minute = saved.solMinutes % 60;
     }
+    if (typeof saved.rng === "number") world.rng = saved.rng;
     if (saved.story && typeof saved.story === "object") world.story = saved.story as World["story"];
     if (typeof saved.chronicle === "string") world.chronicle = saved.chronicle;
     if (typeof saved.chronicleAt === "string" || saved.chronicleAt === null) world.chronicleAt = saved.chronicleAt as string | null;
     if (typeof saved.needsSummary === "boolean") world.needsSummary = saved.needsSummary;
     if (typeof saved.summaryFor === "number" || saved.summaryFor === null) world.summaryFor = saved.summaryFor as number | null;
-    if (saved.food && typeof saved.food === "object") world.food = saved.food as World["food"];
-    if (saved.wood && typeof saved.wood === "object") world.wood = saved.wood as World["wood"];
-    if (saved.stone && typeof saved.stone === "object") world.stone = saved.stone as World["stone"];
-    if (saved.cloth && typeof saved.cloth === "object") world.cloth = saved.cloth as World["cloth"];
+    if (saved.storages && typeof saved.storages === "object") world.storages = saved.storages as World["storages"];
+    if (Array.isArray(saved.nodes)) world.nodes = saved.nodes as World["nodes"];
+    if (Array.isArray(saved.sites)) world.sites = saved.sites as World["sites"];
+    if (Array.isArray(saved.animals)) world.animals = saved.animals as World["animals"];
     if (Array.isArray(saved.expansions)) world.expansions = saved.expansions as World["expansions"];
     if (Array.isArray(saved.bonds)) world.bonds = saved.bonds as World["bonds"];
     if (Array.isArray(saved.log)) world.log = saved.log as World["log"];
@@ -191,21 +197,15 @@ export async function loadTown(world: World): Promise<void> {
     if (Array.isArray(saved.visitors)) world.visitors = saved.visitors as World["visitors"];
     if (Array.isArray(saved.visitorLog)) world.visitorLog = saved.visitorLog as string[];
     if (Array.isArray(saved.people)) {
-      for (const item of saved.people as { id?: string; place?: World["people"][number]["place"]; x?: number; y?: number; mood?: string; innerNote?: string; alive?: boolean; bricks?: number; authority?: number; age?: number; hunger?: number; energy?: number }[]) {
+      for (const item of saved.people as World["people"]) {
         const person = world.people.find((candidate) => candidate.id === item.id);
         if (!person) continue;
         Object.assign(person, item);
-        if (item.place) person.place = item.place;
-        if (typeof item.x === "number") person.x = item.x;
-        if (typeof item.y === "number") person.y = item.y;
-        if (typeof item.mood === "string") person.mood = item.mood;
-        if (typeof item.innerNote === "string") person.innerNote = item.innerNote;
-        if (typeof item.alive === "boolean") person.alive = item.alive;
-        if (typeof item.bricks === "number") person.bricks = item.bricks;
-        if (typeof item.authority === "number") person.authority = item.authority;
-        if (typeof item.age === "number") person.age = item.age;
-        if (typeof item.hunger === "number") person.hunger = item.hunger;
-        if (typeof item.energy === "number") person.energy = item.energy;
+      }
+      // People born in a previous run are not in the seed cast; append them.
+      const known = new Set(world.people.map((person) => person.id));
+      for (const item of saved.people as World["people"]) {
+        if (!known.has(item.id)) world.people.push(item);
       }
     }
   } catch (error) {

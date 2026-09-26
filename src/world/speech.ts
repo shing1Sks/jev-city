@@ -1,8 +1,16 @@
 import { allowedIntentIds, allowedToneIds, allowedTopicIds, renderUtterance } from "./lexicon.js";
-import type { ActionOption, Audience, Decision, Person, Utterance, World } from "./types.js";
+import { placeOf } from "./map.js";
+import type { Audience, Decision, Person, StepOption, Utterance, World } from "./types.js";
+import { dist } from "./types.js";
 
+/** "Here" is earshot on the continuous map, not a shared place-state. */
 export function othersHere(person: Person, world: World): Person[] {
-  return world.people.filter((other) => other.id !== person.id && other.place === person.place);
+  return world.people.filter((other) => other.id !== person.id && other.alive && dist(other, person) <= 3.5);
+}
+
+function atRegion(person: Person, id: Person["place"]): boolean {
+  const place = placeOf(id);
+  return dist(person, { x: place.x, y: place.y }) <= place.r;
 }
 
 export function legalAudiences(person: Person, world: World): Audience[] {
@@ -14,7 +22,7 @@ export function legalAudiences(person: Person, world: World): Audience[] {
       ? others.some((other) => person.guardians.includes(other.id))
       : others.length > 0;
   if (canPrivate) audiences.push("private");
-  if ((person.band === "adult" || person.band === "elder") && person.place === "square") {
+  if ((person.band === "adult" || person.band === "elder") && atRegion(person, "square")) {
     audiences.push("town");
   }
   if (audiences.length === 0) audiences.push("here");
@@ -34,9 +42,9 @@ export function sanitizeSpeech(
   person: Person,
   world: World,
   decision: Pick<Decision, "speak" | "audience" | "listenerId" | "intentWord" | "topic" | "tone">,
-  option: ActionOption,
+  option: StepOption,
 ): { speak: boolean; utterance: Utterance | null; audience: Audience; listenerId: string | null } {
-  const speak = decision.speak || option.kind === "speak";
+  const speak = decision.speak || option.kind === "express";
   if (!speak) {
     return { speak: false, utterance: null, audience: "here", listenerId: null };
   }
@@ -63,7 +71,7 @@ export function sanitizeSpeech(
   } else {
     listenerId = null;
   }
-  if (audience === "town" && (person.place !== "square" || (person.band !== "adult" && person.band !== "elder"))) {
+  if (audience === "town" && (!atRegion(person, "square") || (person.band !== "adult" && person.band !== "elder"))) {
     audience = audiences.includes("here") ? "here" : audiences[0] ?? "here";
   }
 

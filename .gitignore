@@ -7,3 +7,4 @@ data/events.md
 data/world.json
 *.log
 .DS_Store
+.asset-scratch/

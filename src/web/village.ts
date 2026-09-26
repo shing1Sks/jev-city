@@ -1,5 +1,5 @@
 import { PLACES } from "../world/map.js";
-import type { PlaceId } from "../world/types.js";
+import type { NodeKind, PlaceId, ResourceNode } from "../world/types.js";
 
 export const SPOTS: Record<PlaceId, { x: number; y: number }> = Object.fromEntries(
   PLACES.map((place) => [place.id, { x: place.x, y: place.y }]),
@@ -78,6 +78,38 @@ export const PROPS: Prop[] = [
   { src: "/craft/rocks/rock-4.png", x: 90, y: 74, w: 2 },
   { src: "/craft/rocks/rock-5.png", x: 8, y: 78, w: 1.7 },
 ];
+
+export interface NodeLook {
+  src: string;
+  w: number;
+}
+
+/** Sprite by depletion stage: index 0 is spent, last is full. Crops draw in CSS. */
+const NODE_LOOKS: Record<Exclude<NodeKind, "crop">, NodeLook[]> = {
+  tree: [
+    { src: "/craft/summer/Prop%20-%20Tree%20Stump%20Short.png", w: 2.4 },
+    { src: "/craft/summer/Prop%20-%20Tree%20Small.png", w: 3.4 },
+    { src: "/craft/summer/Prop%20-%20Tree%20Medium.png", w: 4.4 },
+    { src: "/craft/summer/prop%20-%20Tree%20Large.png", w: 5.4 },
+  ],
+  rock: [
+    { src: "/craft/summer/Prop%20-%20Rock%2005.png", w: 1.4 },
+    { src: "/craft/summer/Prop%20-%20Rock%2003.png", w: 1.9 },
+    { src: "/craft/summer/Prop%20-%20Rock%2001.png", w: 2.4 },
+  ],
+  berry: [
+    { src: "/craft/summer/Prop%20-%20Bushes%20Small.png", w: 2.2 },
+    { src: "/craft/summer/Prop%20-%20Bushes%20Small.png", w: 3.1 },
+    { src: "/craft/summer/Prop%20-%20Bushes%20Medium.png", w: 3.7 },
+    { src: "/craft/summer/Prop%20-%20Bushes%20Large.png", w: 4.3 },
+  ],
+};
+
+export function nodeLook(node: ResourceNode): NodeLook | null {
+  if (node.kind === "crop") return null;
+  const looks = NODE_LOOKS[node.kind];
+  return looks[Math.min(node.stage, looks.length - 1)] ?? null;
+}
 
 export type Look =
   | { pack: "goblin"; who: "male" | "female" | "chief"; hue: number }
